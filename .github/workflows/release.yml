@@ -1,0 +1,115 @@
+# Génère les versions Linux et Windows 11.
+#
+# * Pousser un tag `vX.Y.Z` (identique à la version de Cargo.toml) crée une
+#   release GitHub avec les archives et leurs sommes SHA-256.
+# * Lancé à la main (onglet Actions), il produit seulement les archives,
+#   téléchargeables comme artefacts du workflow.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    name: Linux x86_64
+    # Même environnement que `make linux-portable` (Debian 12) : le binaire
+    # fonctionne avec toute glibc >= 2.35 (Ubuntu 22.04+, Debian 12+, Fedora 36+).
+    runs-on: ubuntu-latest
+    container: rust:1-bookworm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dépendances système
+        run: apt-get update && apt-get install -y --no-install-recommends libclang-dev
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Tests
+        run: cargo test --locked --release
+
+      - name: Compilation
+        run: cargo build --locked --release
+
+      - name: Archive
+        run: make package-linux BIN=target/release/mulot-scan
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  windows:
+    name: Windows 11 x86_64
+    runs-on: windows-latest
+    env:
+      # Runtime C lié statiquement : aucune DLL Visual C++ à installer.
+      RUSTFLAGS: -C target-feature=+crt-static
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Tests
+        run: cargo test --locked --release
+
+      - name: Compilation
+        run: cargo build --locked --release
+
+      - name: Archive
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"(.+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          $name = "mulot-scan-$version-windows-x86_64"
+          New-Item -ItemType Directory -Force -Path "build/$name", dist | Out-Null
+          Copy-Item target/release/mulot-scan.exe, README.md, docs/PROTOCOLE.md "build/$name/"
+          Compress-Archive -Path "build/$name" -DestinationPath "dist/$name.zip" -Force
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86_64
+          path: dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    name: Publication
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Vérification du numéro de version
+        run: |
+          version=$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -n1)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Le tag $GITHUB_REF_NAME ne correspond pas à la version v$version de Cargo.toml"
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Sommes de contrôle
+        run: cd dist && sha256sum *.tar.gz *.zip > SHA256SUMS && cat SHA256SUMS
+
+      - name: Release GitHub
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --title "mulot-scan $GITHUB_REF_NAME" --generate-notes
+          fi

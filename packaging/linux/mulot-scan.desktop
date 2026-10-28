@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Mulot-scan
+GenericName=Souris scanner
+Comment=Numériser des documents avec une souris scanner (compatible IRIScan Mouse)
+Exec=mulot-scan
+Icon=mulot-scan
+Terminal=false
+Categories=Graphics;Scanning;OCR;
+StartupWMClass=mulot-scan

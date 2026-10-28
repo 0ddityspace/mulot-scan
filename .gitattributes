@@ -1,0 +1,14 @@
+# Fins de ligne normalisées dans le dépôt
+* text=auto
+
+# Scripts et fichiers lus par des outils Unix : toujours LF
+*.sh       text eol=lf
+Makefile   text eol=lf
+Dockerfile text eol=lf
+*.desktop  text eol=lf
+*.yml      text eol=lf
+
+# Binaires
+*.png binary
+*.ico binary
+*.jpg binary

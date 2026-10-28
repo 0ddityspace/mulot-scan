@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#0d9488"/>
+    </linearGradient>
+    <linearGradient id="beam" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#67e8f9" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#a5f3fc" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#67e8f9" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="mouse" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#dbe4f0"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="5" stdDeviation="6" flood-color="#0b1b3a" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <!-- tile -->
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#bg)"/>
+
+  <!-- sheet of paper -->
+  <g transform="rotate(-8 112 128)" filter="url(#shadow)">
+    <rect x="44" y="40" width="136" height="176" rx="10" fill="#ffffff"/>
+    <!-- scanned lines (crisp) -->
+    <g fill="#1e293b">
+      <rect x="62" y="62" width="100" height="10" rx="5"/>
+      <rect x="62" y="82" width="84" height="10" rx="5"/>
+      <rect x="62" y="102" width="96" height="10" rx="5"/>
+    </g>
+    <!-- lines still to scan (faded) -->
+    <g fill="#cbd5e1">
+      <rect x="62" y="142" width="92" height="10" rx="5"/>
+      <rect x="62" y="162" width="100" height="10" rx="5"/>
+      <rect x="62" y="182" width="70" height="10" rx="5"/>
+    </g>
+    <!-- scan beam -->
+    <rect x="36" y="116" width="152" height="22" fill="url(#beam)"/>
+    <rect x="36" y="126" width="152" height="3" rx="1.5" fill="#22d3ee"/>
+  </g>
+
+  <!-- mouse -->
+  <g transform="rotate(-8 176 150)" filter="url(#shadow)">
+    <path d="M176 92 C204 92 220 112 220 140 L220 172 C220 200 202 216 176 216 C150 216 132 200 132 172 L132 140 C132 112 148 92 176 92 Z" fill="url(#mouse)"/>
+    <path d="M176 94 L176 132" stroke="#94a3b8" stroke-width="3" stroke-linecap="round"/>
+    <path d="M134 134 L218 134" stroke="#94a3b8" stroke-width="3" stroke-linecap="round"/>
+    <!-- scan button -->
+    <rect x="168" y="104" width="16" height="20" rx="8" fill="#0d9488"/>
+    <!-- scan window glow -->
+    <rect x="146" y="176" width="60" height="12" rx="6" fill="#22d3ee"/>
+    <rect x="146" y="176" width="60" height="12" rx="6" fill="none" stroke="#0e7490" stroke-width="2"/>
+  </g>
+</svg>

@@ -1,0 +1,25 @@
+# --- Compilation Rust ---
+/target/
+
+# --- Sorties du Makefile ---
+# compilateur officiel, SDK Windows, caches et compilations croisées
+/build/
+# archives publiées (générées par `make release` ou GitHub Actions)
+/dist/
+
+# --- Logiciel Windows d'origine ---
+# binaires propriétaires d'I.R.I.S./Dacuda : ne jamais les publier
+/winapp/
+
+# --- Données de test ---
+# enregistrements bruts de la souris : ils peuvent contenir des documents personnels
+*.mjpg
+
+# --- Éditeurs et systèmes ---
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
