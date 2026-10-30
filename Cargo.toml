@@ -6,7 +6,8 @@ edition = "2024"
 rust-version = "1.95"
 description = "Mulot-scan: unofficial cross-platform software for scanner mice (compatible with IRIScan Mouse / Dacuda Scanner Mouse)"
 license = "MIT OR Apache-2.0"
-exclude = ["/build", "/dist", "/winapp"]
+repository = "https://github.com/0ddityspace/mulot-scan"
+exclude = ["/build", "/dist"]
 
 [dependencies]
 anyhow = "1"

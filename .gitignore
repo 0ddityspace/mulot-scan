@@ -7,15 +7,9 @@
 # archives publiées (générées par `make release` ou GitHub Actions)
 /dist/
 
-# --- Logiciel Windows d'origine ---
-# binaires propriétaires d'I.R.I.S./Dacuda : ne jamais les publier
-/winapp/
-
 # --- Données de test ---
 # enregistrements bruts de la souris : ils peuvent contenir des documents personnels
 *.mjpg
-# enregistrements de diagnostic (`mulot-scan --record captures`) et leurs résultats
-/captures/
 
 # --- Éditeurs et systèmes ---
 .idea/

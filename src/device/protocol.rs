@@ -13,8 +13,8 @@
 //! * the image sensor (SCCB id `0x42`), accessed indirectly through MCU
 //!   mailbox registers `0xb8` / `0xbd` / `0xbe` while mouse mode is disabled.
 //!
-//! The sequences below are ports of `DLL_OvtApi.dll`, `SCCBCore.dll` and
-//! `OVCamUVC_Ext.dll` (protocol variant 2).
+//! The sequences below reproduce those of the original Windows software
+//! (protocol variant 2), as described in `docs/PROTOCOLE.md`.
 
 #![allow(dead_code)] // complete register map kept for reference and diagnostics
 
@@ -130,7 +130,7 @@ impl Mcu {
         self.write_raw(addr, val)
     }
 
-    /// Write and read back, retrying up to 10 times (port of `FUN_100038d0`).
+    /// Write and read back, retrying up to 10 times (as the original software does).
     pub fn write_verified(&self, addr: u16, val: u16) -> Result<()> {
         let _g = self.lock.lock();
         self.write_raw(addr, val)?;
@@ -269,8 +269,8 @@ impl Mcu {
 
     // ---------------------------------------------------------------- EEPROM
 
-    /// Reads `len` bytes of the EEPROM starting at `addr` (selector 3 state machine,
-    /// port of `FUN_10007350`). Mouse mode should be disabled.
+    /// Reads `len` bytes of the EEPROM starting at `addr` (selector 3 state
+    /// machine). Mouse mode should be disabled.
     pub fn eeprom_read(&self, addr: u16, len: usize) -> Result<Vec<u8>> {
         if len == 0 {
             return Ok(Vec::new());
@@ -310,7 +310,7 @@ impl Mcu {
         Ok(out)
     }
 
-    /// Reads the calibration blob stored by the original software (`DaReadBinaryData`).
+    /// Reads the calibration blob stored by the original software.
     pub fn read_user_data(&self) -> Result<Option<Vec<u8>>> {
         let hdr = self.eeprom_read(0x3000, 2)?;
         let n = u16::from_le_bytes([hdr[0], hdr[1]]) as usize;
@@ -361,7 +361,7 @@ impl Mcu {
     }
 }
 
-/// Port of the gain encoding in `FUN_10003000` (OmniVision AGC format).
+/// Gain encoding of the image sensor (OmniVision AGC format).
 pub fn encode_gain(gain: f64) -> u16 {
     let mut g = gain;
     let mut bits: u16 = 0;

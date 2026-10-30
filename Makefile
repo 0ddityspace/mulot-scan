@@ -25,7 +25,7 @@ BUILD    := build
 ABS_BUILD = $(abspath $(BUILD))
 
 CARGO    ?= cargo
-DOCS     := README.md docs/PROTOCOLE.md
+DOCS     := README.md LICENSE-MIT LICENSE-APACHE docs/PROTOCOLE.md
 
 # ---------------------------------------------------------------- Linux
 LINUX_TARGET  := x86_64-unknown-linux-gnu

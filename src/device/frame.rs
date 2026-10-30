@@ -8,8 +8,8 @@
 //!   three bytes of "extra bits" and twelve payload bytes.
 //!
 //! Before the JPEG can be decoded those fields must be restored to valid
-//! values (640x296 and a quantisation value of 0x19).  This mirrors
-//! `FUN_10002fe0` in the original `DXCore1.dll`.
+//! values (640x296 and a quantisation value of 0x19), as the original driver
+//! does (see `docs/PROTOCOLE.md`).
 
 /// Real image geometry delivered by the camera in scan mode.
 pub const FRAME_WIDTH: u32 = 640;
@@ -23,8 +23,8 @@ const MARKER_SCAN_LIMIT: usize = 40_000;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RawMouseRecord(pub [u8; 32]);
 
-/// Decoded view of the side-channel record (same field split as
-/// `DaReadMouseData` in `DLL_OvtApi.dll`).
+/// Decoded view of the side-channel record (same field split as the
+/// original driver).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct MouseData {
     /// Frame counter incremented by the firmware for every frame (wraps at 256).
@@ -56,7 +56,7 @@ impl MouseData {
     }
 }
 
-/// Reverses the byte-stuffing used by the firmware (port of `FUN_10002f50`).
+/// Reverses the byte-stuffing used by the firmware.
 fn unstuff(v: u8, bit: u8, hi: u8) -> u8 {
     let v = v as i32;
     let b = ((bit & 1) as i32) * 4;
@@ -139,7 +139,7 @@ impl FrameParser {
             return None;
         }
 
-        // Counter continuity (port of the DAT_100087e4 logic).
+        // Counter continuity, checked like the original driver does.
         let mut counter = p[0] as u32;
         let dropped = match self.last_counter {
             Some(last) => {
@@ -202,7 +202,7 @@ mod tests {
 
     #[test]
     fn unstuff_matches_reference() {
-        // Values computed with the reference implementation of FUN_10002f50.
+        // Reference values of the stuffing scheme.
         assert_eq!(unstuff(0, 0, 0), 0);
         // bit 2 of the result always comes from `bit`
         assert_eq!(unstuff(1, 0, 0), 0);

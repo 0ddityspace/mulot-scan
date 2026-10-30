@@ -39,110 +39,59 @@ IRIScan Mouse, aussi vendue sous le nom Dacuda Scanner Mouse (identifiant USB
 * Export en PNG, JPEG, TIFF, BMP, PDF image, PDF avec texte, TXT et Word (.docx).
 * Ouverture d'une image existante pour l'OCR ou l'export.
 
-Les extensions de partage de l'ancien logiciel (Facebook, Twitter, Evernote,
-Dropbox, Flickr, Google Translate) ne sont pas reprises.
-
 ## Installation
 
-### Prérequis communs
+Les versions prêtes à l'emploi sont sur la page
+[Releases](https://github.com/0ddityspace/mulot-scan/releases).
 
-* Rust 1.95 ou plus récent, via <https://rustup.rs>.
-* Tesseract, facultatif mais nécessaire pour l'OCR.
+Pour l'OCR, installez aussi [Tesseract](https://tesseract-ocr.github.io/tessdoc/Installation.html)
+avec les langues voulues. Mulot-scan fonctionne sans, mais la reconnaissance de
+texte est alors indisponible.
+
+### Windows 10 et 11
+
+Lancez `mulot-scan-…-windows-x86_64-setup.exe`. L'installateur place le
+programme dans `Program Files`, crée les raccourcis et s'enregistre dans
+« Applications installées ». Une version portable sans installation est aussi
+disponible en `.zip`.
+
+Les versions publiées ne sont pas encore signées : au premier lancement, Windows
+SmartScreen affiche « Windows a protégé votre ordinateur ». Cliquez sur
+**Informations complémentaires**, puis **Exécuter quand même**.
+
+Aucun pilote n'est nécessaire, la souris utilise le pilote vidéo USB intégré à
+Windows. Le logiciel d'origine peut rester installé, mais fermez-le avant de
+lancer Mulot-scan, car la caméra ne peut être ouverte que par un programme à la
+fois. Pour Tesseract, l'installeur [UB Mannheim](https://github.com/UB-Mannheim/tesseract/wiki)
+convient : Mulot-scan le trouve automatiquement dans `C:\Program Files\Tesseract-OCR`.
 
 ### Linux
 
-```sh
-# Arch
-sudo pacman -S tesseract tesseract-data-fra tesseract-data-eng
-# Debian / Ubuntu
-sudo apt install tesseract-ocr tesseract-ocr-fra tesseract-ocr-eng
+Décompressez `mulot-scan-…-linux-x86_64.tar.gz` et lancez `mulot-scan`
+(glibc 2.35 ou plus récente : Ubuntu 22.04, Debian 12, Fedora 36 et suivantes).
 
-cargo build --release
-./target/release/mulot-scan
+```sh
+# Tesseract, par exemple :
+sudo pacman -S tesseract tesseract-data-fra          # Arch
+sudo apt install tesseract-ocr tesseract-ocr-fra     # Debian / Ubuntu
 ```
 
 L'utilisateur doit pouvoir lire et écrire `/dev/video*`. C'est en général le cas
 pour la session graphique, sinon ajoutez-le au groupe `video`.
 
-### Windows
+### Depuis les sources
 
-Le plus simple est l'installateur `mulot-scan-…-windows-x86_64-setup.exe` des
-releases : il installe le programme dans `Program Files`, crée les raccourcis et
-s'enregistre dans « Applications installées ». Tant que les versions publiées ne
-sont pas signées, Windows SmartScreen affiche « Windows a protégé votre
-ordinateur » au premier lancement : cliquez sur **Informations
-complémentaires**, puis **Exécuter quand même**.
+Avec Rust 1.95 ou plus récent (<https://rustup.rs>) :
 
-Pour compiler soi-même :
-
-1. Installez les « Build Tools for Visual Studio », charge de travail C++.
-2. Installez Tesseract, par exemple avec l'installeur UB Mannheim
-   (<https://github.com/UB-Mannheim/tesseract/wiki>), en cochant les langues voulues.
-   Le logiciel le trouve automatiquement dans `C:\Program Files\Tesseract-OCR`.
-3. Compilez :
-
-```bat
+```sh
 cargo build --release
-target\release\mulot-scan.exe
+./target/release/mulot-scan
 ```
 
-Aucun pilote n'est nécessaire, la souris utilise le pilote vidéo USB intégré à
-Windows. Le logiciel d'origine peut rester installé, mais fermez-le avant de
-lancer mulot-scan, car la caméra ne peut être ouverte que par un programme à la fois.
-
-## Générer les versions publiées
-
-Le `Makefile` produit les archives dans `dist/` depuis Linux :
-
-```sh
-make linux-portable                 # Linux x86_64, compilé dans Docker, glibc ≥ 2.35
-make windows ACCEPT_MSVC_LICENSE=1  # Windows 11 x86_64, exécutable autonome
-make windows-installer ACCEPT_MSVC_LICENSE=1  # + installateur NSIS
-make release ACCEPT_MSVC_LICENSE=1  # tout + dist/SHA256SUMS
-make help                           # toutes les cibles
-```
-
-* `make linux` compile directement sur la machine, plus vite. Le binaire exige
-  alors la glibc locale et ne convient pas à la diffusion.
-* La cible Windows est compilée de façon croisée et liée avec `lld-link`, du
-  paquet `lld`. Les bibliothèques du SDK Windows sont téléchargées une fois
-  auprès de Microsoft par l'outil `xwin`, d'où l'acceptation explicite de leur
-  licence avec `ACCEPT_MSVC_LICENSE=1`.
-* L'installateur est construit avec NSIS (`makensis`) ; s'il n'est pas installé,
-  le Makefile le lance dans un conteneur Docker Debian.
-* Avec un certificat de signature de code (`WINDOWS_CERT_PFX` pour le chemin du
-  `.pfx`, `WINDOWS_CERT_PASSWORD`), le programme, l'installateur et le
-  désinstalleur sont signés par `packaging/windows/sign.sh` (osslsigncode).
-* Variante sans SDK Microsoft : `make windows WINDOWS_ABI=gnu`, après avoir
-  installé MinGW-w64 (Arch : `sudo pacman -S mingw-w64-gcc`).
-* Sans rustup, le Makefile télécharge dans `build/toolchain` le compilateur Rust
-  officiel de même version, car celui des distributions ne peut pas utiliser la
-  bibliothèque standard Windows officielle.
-* Pour le nettoyage, `make clean` supprime les archives et `make cleanall` les
-  compilations, en gardant le compilateur et le SDK téléchargés. `make distclean`
-  supprime tout ce qui a été généré ou téléchargé.
-
-### Avec GitHub Actions
-
-* `.github/workflows/ci.yml` compile et teste le projet sous Linux et Windows à
-  chaque push et à chaque pull request.
-* `.github/workflows/release.yml` produit les archives Linux et Windows 11 et
-  l'installateur Windows. Il compile la version Linux dans le conteneur Debian 12
-  et la version Windows nativement, avec le runtime lié statiquement. Si les
-  secrets `WINDOWS_CERT_PFX_BASE64` et `WINDOWS_CERT_PASSWORD` sont définis dans
-  le dépôt, les exécutables Windows sont signés.
-
-Pour publier une version, mettez à jour `version` dans `Cargo.toml`, puis poussez
-le tag correspondant :
-
-```sh
-git tag v0.2.0
-git push origin v0.2.0
-```
-
-La release GitHub est alors créée avec les deux archives et `SHA256SUMS`. Le
-workflow peut aussi être lancé à la main depuis l'onglet Actions : les archives
-sont alors disponibles comme artefacts, sans release.
+Sous Windows, il faut en plus les « Build Tools for Visual Studio », charge de
+travail C++. Sous Linux, `make install` installe le programme, son icône et son
+raccourci dans `~/.local`. La compilation croisée et la publication sont
+décrites dans [docs/DEVELOPPEMENT.md](docs/DEVELOPPEMENT.md).
 
 ## Utilisation
 
@@ -152,51 +101,31 @@ sont alors disponibles comme artefacts, sans release.
    l'orange, revenez sur une zone déjà scannée.
 4. Arrêtez le scan, puis retouchez, lancez l'OCR et enregistrez.
 
-Sous Linux, `make install` installe le programme, son icône et son raccourci
-dans `~/.local`. Ajoutez `PREFIX=/usr/local` avec sudo pour une installation globale.
-
 Pour des fonds bien blancs, faites une fois **Réglages → Calibrer** avec la souris
-immobile sur une feuille blanche vierge, sans impression au verso. Le texte ou les
-taches éventuels sont ignorés, mais une feuille trop marquée est refusée. Le résultat est tourné de 90° vers la gauche
-par défaut. Les réglages permettent de changer cette orientation, de régler la
-sensibilité au soulèvement et de désactiver la correction du miroir si le texte
-apparaît inversé.
+immobile sur une feuille blanche vierge, sans impression au verso. Le texte ou
+les taches éventuels sont ignorés, mais une feuille trop marquée est refusée.
+
+Le résultat est tourné de 90° vers la gauche par défaut. Les réglages permettent
+de changer cette orientation, de régler la sensibilité au soulèvement et de
+désactiver la correction du miroir si le texte apparaît inversé.
+
+Si le programme s'est arrêté brutalement pendant un scan, le pointeur peut rester
+figé. Relancez Mulot-scan ou exécutez `mulot-scan reset`.
 
 ### Ligne de commande
 
 ```text
 mulot-scan                         interface graphique
-mulot-scan --replay flux.mjpg      interface alimentée par un enregistrement
-mulot-scan --record captures       interface ; chaque scan est aussi enregistré
-                                   (captures/scan-001.mjpg, scan-002.mjpg…)
 mulot-scan --tray                  démarre caché dans la zone de notification (Windows)
 mulot-scan probe                   informations sur la souris
 mulot-scan reset                   remet la souris en mode souris normal
-mulot-scan record flux.mjpg 10     enregistre 10 s de flux brut
-mulot-scan stitch flux.mjpg out.png  assemble un enregistrement hors ligne
+mulot-scan --help                  toutes les options, dont celles de diagnostic
 ```
-
-Si le programme s'est arrêté brutalement pendant un scan, le pointeur peut rester
-figé. Relancez mulot-scan ou exécutez `mulot-scan reset`.
-
-## Organisation du code
-
-| Module | Rôle |
-|---|---|
-| `src/device/` | Protocole matériel. `linux.rs` utilise V4L2 et l'ioctl UVC, `windows.rs` utilise Media Foundation et IKsControl. |
-| `src/stitch/` | Assemblage. `stitcher.rs` gère le suivi de position, `register.rs` la corrélation de phase, `canvas.rs` la mosaïque en tuiles, `flat.rs` la correction d'éclairage, `laser.rs` le décodage des capteurs laser, `lift.rs` la détection du soulèvement et `output.rs` l'image finale. |
-| `src/edit/` | Retouches. `erase.rs` contient la gomme. |
-| `src/ocr.rs` | Pilotage de Tesseract |
-| `src/export.rs` | Formats de sortie |
-| `src/app/` | Interface egui. `mod.rs` contient l'état et les actions, `editor.rs` l'éditeur d'image, `panels.rs`, `views.rs` et `windows.rs` l'affichage. |
-| `src/worker.rs` | Fils de traitement : détection de la souris, scan, calibrage |
-| `src/cli.rs` | Sous-commandes `probe`, `record` et `stitch` |
-| `examples/synth.rs` | Génère un enregistrement synthétique à partir d'une image, pour les tests |
-
-Le protocole retrouvé est décrit dans [docs/PROTOCOLE.md](docs/PROTOCOLE.md).
 
 ## Limites connues
 
+* La version Windows n'a pas encore été testée sur une vraie machine Windows,
+  ni le bouton Scan de la souris en conditions réelles.
 * Les constantes des capteurs laser (échelle, position) ont été mesurées sur une
   seule souris. Si le suivi se dégrade sur un autre exemplaire, décochez
   « Utiliser les capteurs laser » dans les réglages.
@@ -204,11 +133,14 @@ Le protocole retrouvé est décrit dans [docs/PROTOCOLE.md](docs/PROTOCOLE.md).
   zone peu marquée, la souris peut être recollée au mauvais endroit.
 * De petits décalages restent visibles entre deux passes éloignées dans le temps,
   faute d'optimisation globale de la mosaïque.
-* La version Windows compile, mais elle n'a pas encore été testée sur une vraie
-  machine Windows.
 * Le calibrage d'usine stocké dans la souris est lu mais pas interprété.
-* Le comportement du bouton Scan n'a pas encore été vérifié en conditions réelles.
 * La détection du soulèvement suppose que les octets 14 et 15 des données capteurs
   sont la qualité de surface. Leurs valeurs, entre 130 et 160 sur papier, le
   suggèrent, mais ce n'est pas confirmé. La chute de luminosité de l'image sert
   de détection de secours.
+
+Le protocole de la souris est décrit dans [docs/PROTOCOLE.md](docs/PROTOCOLE.md).
+
+## Licence
+
+Au choix, sous licence [MIT](LICENSE-MIT) ou [Apache 2.0](LICENSE-APACHE).

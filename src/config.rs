@@ -49,14 +49,7 @@ impl Default for Config {
 }
 
 pub fn config_dir() -> PathBuf {
-    let base = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
-    let dir = base.join("mulot-scan");
-    // Reprise des réglages de l'ancien nom du projet.
-    let old = base.join("iris-scan");
-    if !dir.exists() && old.is_dir() && std::fs::rename(&old, &dir).is_err() {
-        return old;
-    }
-    dir
+    dirs::config_dir().unwrap_or_else(|| PathBuf::from(".")).join("mulot-scan")
 }
 
 impl Config {

@@ -106,7 +106,8 @@ impl Scanner {
     /// delivers [`DeviceEvent`]s until it is stopped.
     pub fn start(self: &Arc<Self>, settings: ImagingSettings, record_to: Option<&Path>) -> Result<ScanSession> {
         let mcu = self.mcu.clone();
-        // Port of DaStart(): disable mouse mode, configure, stream, enter scan mode.
+        // Same order as the original software: disable mouse mode, configure,
+        // stream, enter scan mode.
         mcu.disable_mouse().context("disabling mouse mode")?;
         let setup = (|| -> Result<()> {
             mcu.write_verified(protocol::reg::SCAN_SETUP, 0x60)?;

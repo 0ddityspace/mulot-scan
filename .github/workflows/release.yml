@@ -107,7 +107,7 @@ jobs:
           version=$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -n1)
           name="mulot-scan-$version-windows-x86_64"
           mkdir -p "build/$name" dist
-          cp build/exe/mulot-scan.exe README.md docs/PROTOCOLE.md "build/$name/"
+          cp build/exe/mulot-scan.exe README.md LICENSE-MIT LICENSE-APACHE docs/PROTOCOLE.md "build/$name/"
           sh packaging/windows/sign.sh "build/$name/mulot-scan.exe"
           (cd build && zip -qr "../dist/$name.zip" "$name")
           makensis -V2 -NOCD -DVERSION="$version" -DROOT=. -DEXEFILE="build/$name/mulot-scan.exe" \
