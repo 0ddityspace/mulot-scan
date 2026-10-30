@@ -75,6 +75,10 @@ pub(super) struct Editor {
     pan: Vec2,
     /// Screen pixels per full-image pixel, for the zoom readout.
     scale: f32,
+    /// Where the image was drawn in the last frame.
+    view_rect: Rect,
+    /// Pointer of a scripted demonstration (`autotest.rs`), drawn like the real one.
+    demo_pointer: Option<Pos2>,
 }
 
 impl Default for Editor {
@@ -93,6 +97,8 @@ impl Default for Editor {
             zoom: 1.0,
             pan: Vec2::ZERO,
             scale: 1.0,
+            view_rect: Rect::NOTHING,
+            demo_pointer: None,
         }
     }
 }
@@ -226,6 +232,50 @@ impl App {
                 HistoryEntry::Erase { full, small }
             }
         }
+    }
+
+    /// Zooms on a horizontal band of the image, `ny` being its centre as a
+    /// fraction of the image height (scripted demonstration).
+    pub(super) fn demo_zoom(&mut self, zoom: f32, ny: f32) {
+        let fit = self.editor.view_rect.size() / self.editor.zoom;
+        self.editor.zoom = zoom;
+        self.editor.pan = Vec2::new(0.0, -(ny - 0.5) * fit.y * zoom);
+    }
+
+    /// Paints with the eraser at `(nx, ny)`, in fractions of the displayed
+    /// image; `lift` ends the stroke (scripted demonstration).
+    pub(super) fn demo_erase(&mut self, nx: f32, ny: f32, lift: bool) {
+        let rect = self.editor.view_rect;
+        let Some(src) = self.result.as_ref().map(|r| r.dimensions()) else { return };
+        let p = rect.lerp_inside(Vec2::new(nx, ny));
+        self.editor.demo_pointer = Some(p);
+        let (x, y) = self.adjust.view_to_source(src, nx, ny, true);
+        let point = (x / src.0 as f32, y / src.1 as f32);
+        match &mut self.editor.stroke {
+            Some((stroke, screen)) => {
+                stroke.points.push(point);
+                screen.push(p);
+            }
+            None => {
+                let stroke =
+                    Stroke { points: vec![point], radius: self.editor.brush / src.0 as f32, mode: self.editor.erase_mode };
+                self.editor.stroke = Some((stroke, vec![p]));
+            }
+        }
+        if lift && let Some((stroke, _)) = self.editor.stroke.take() {
+            self.apply_stroke(&stroke);
+        }
+    }
+
+    /// Ends a scripted demonstration: back to the whole, unedited image.
+    pub(super) fn demo_end(&mut self) {
+        self.editor.demo_pointer = None;
+        while self.can_undo() {
+            self.undo();
+        }
+        self.editor.redo.clear();
+        self.set_tool(Tool::Hand);
+        self.editor.fit();
     }
 
     pub(super) fn apply_stroke(&mut self, stroke: &Stroke) {
@@ -411,6 +461,7 @@ impl App {
         let place = |e: &Editor| Rect::from_center_size(avail.center() + e.pan, fit * e.zoom);
         self.zoom_and_pan(&ctx, &response, place(&self.editor), avail.center(), fit);
         let rect = place(&self.editor);
+        self.editor.view_rect = rect;
         painter.image(tex.id(), rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
 
         // Screen pixels per full-image pixel.
@@ -510,7 +561,9 @@ impl App {
             };
             self.editor.stroke = Some((stroke, vec![p]));
         }
-        if let Some((stroke, screen)) = &mut self.editor.stroke {
+        if let Some((stroke, screen)) = &mut self.editor.stroke
+            && self.editor.demo_pointer.is_none()
+        {
             if down {
                 if let Some(p) = pos
                     && screen.last().is_none_or(|l| l.distance(p) > (r_screen / 4.0).max(2.0))
@@ -533,7 +586,7 @@ impl App {
             }
             painter.add(egui::Shape::line(screen.clone(), egui::Stroke::new(r_screen * 2.0, color)));
         }
-        if let Some(p) = response.hover_pos()
+        if let Some(p) = response.hover_pos().or(self.editor.demo_pointer)
             && !panning
         {
             painter.circle_stroke(p, r_screen + 1.0, egui::Stroke::new(1.0, Color32::BLACK));

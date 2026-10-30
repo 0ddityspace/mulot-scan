@@ -35,7 +35,7 @@
   .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   @media (prefers-color-scheme: dark) { .btn.primary { color: #0d1f14; } }
   figure { margin: 24px 0; }
-  figure img { width: 100%; border-radius: 8px; border: 1px solid var(--line); display: block; }
+  figure img, figure video { width: 100%; border-radius: 8px; border: 1px solid var(--line); display: block; }
   figcaption { color: var(--muted); font-size: .9rem; margin-top: 6px; }
   ul { padding-left: 1.2em; }
   li { margin: 4px 0; }
@@ -99,6 +99,12 @@
   <figure>
     <img src="img/recadrage.jpg" alt="Éditeur : cadre de recadrage avec poignée de rotation">
     <figcaption>Recadrer et redresser : faites glisser les bords du cadre, ou la poignée ronde pour tourner l'image.</figcaption>
+  </figure>
+
+  <figure>
+    <video src="img/gomme.mp4" poster="img/gomme.jpg" autoplay loop muted playsinline
+      aria-label="Gomme adaptative : un paragraphe effacé en trois coups de pinceau"></video>
+    <figcaption>Gomme adaptative : le texte disparaît, la texture du papier est reconstituée.</figcaption>
   </figure>
 
   <h2>Raccourcis de l'éditeur</h2>

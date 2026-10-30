@@ -15,6 +15,29 @@ pub(super) struct AutoTest {
     pub(super) ticks: u32,
 }
 
+#[derive(Clone, Copy)]
+enum DemoStep {
+    Hold,
+    /// Eraser at a point of the displayed image (fractions); `true` ends the stroke.
+    Paint(f32, f32, bool),
+}
+
+/// Erases the last paragraph of the demonstration document, line by line.
+fn demo_steps() -> Vec<DemoStep> {
+    // (line centre, start, end) as fractions of the image.
+    const LINES: [(f32, f32, f32); 3] = [(0.795, 0.03, 0.81), (0.846, 0.85, 0.11), (0.896, 0.11, 0.40)];
+    let mut steps = vec![DemoStep::Hold; 12];
+    for (y, x0, x1) in LINES {
+        let n = ((x1 - x0).abs() / 0.022).ceil() as usize;
+        for i in 0..=n {
+            steps.push(DemoStep::Paint(x0 + (x1 - x0) * i as f32 / n as f32, y, i == n));
+        }
+        steps.extend([DemoStep::Hold; 4]);
+    }
+    steps.extend([DemoStep::Hold; 36]);
+    steps
+}
+
 impl App {
     pub(super) fn screenshot(ctx: &egui::Context, path: PathBuf) {
         ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::ScreenshotCallback::new(move |img| {
@@ -44,8 +67,31 @@ impl App {
             }
             2 if self.mode == Mode::Review && t.ticks > 20 => {
                 Self::screenshot(ctx, dir.join("3-revue.png"));
-                t.stage = 3;
+                t.stage = 10;
                 t.ticks = 0;
+            }
+            // Eraser demonstration, one screenshot per step (assembled into a video).
+            10 => {
+                let tick = t.ticks as usize;
+                if tick == 1 {
+                    self.set_tool(Tool::Erase);
+                    self.editor.erase_mode = EraseMode::Fill;
+                    self.editor.brush = 30.0;
+                    self.demo_zoom(1.9, 0.82);
+                    return;
+                }
+                let Some(&step) = demo_steps().get(tick - 2) else {
+                    t.stage = 3;
+                    t.ticks = 0;
+                    self.demo_end();
+                    return;
+                };
+                match step {
+                    DemoStep::Hold => {}
+                    DemoStep::Paint(x, y, lift) => self.demo_erase(x, y, lift),
+                }
+                std::fs::create_dir_all(dir.join("gomme")).ok();
+                Self::screenshot(ctx, dir.join(format!("gomme/{:03}.png", tick - 2)));
             }
             3 if t.ticks == 8 => {
                 self.edited_dirty = true;
