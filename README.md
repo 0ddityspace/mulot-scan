@@ -6,6 +6,8 @@ Logiciel libre pour Windows et Linux, compatible avec la souris scanner
 IRIScan Mouse, aussi vendue sous le nom Dacuda Scanner Mouse (identifiant USB
 `274f:c001`). Il remplace le logiciel Windows d'origine « Scanner Mouse ».
 
+**Site : <https://0ddityspace.github.io/mulot-scan/>**
+
 > Mulot-scan est un projet indépendant, sans lien avec I.R.I.S. ni Canon, ni
 > approuvé par eux. IRIScan est une marque de ses propriétaires respectifs ; elle
 > n'est citée ici que pour indiquer le matériel compatible.

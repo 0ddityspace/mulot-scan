@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mulot-scan — logiciel libre pour souris scanner</title>
+<meta name="description" content="Logiciel libre pour la souris scanner IRIScan Mouse / Dacuda, sous Windows et Linux : scan, retouche, OCR, export PDF et Word.">
+<link rel="icon" href="img/icon.png">
+<style>
+  :root {
+    --bg: #fbfbfa; --fg: #1d1f21; --muted: #5f6368; --line: #e3e3e0;
+    --accent: #1e6e3c; --code: #f0f0ed;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #17181a; --fg: #e6e6e3; --muted: #a0a3a8; --line: #2c2e31;
+            --accent: #5cc285; --code: #222427; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 17px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 860px; margin: 0 auto; padding: 48px 24px 64px; }
+  header { display: flex; align-items: center; gap: 20px; margin-bottom: 8px; }
+  header img { width: 72px; height: 72px; }
+  h1 { font-size: 2.2rem; margin: 0; line-height: 1.1; }
+  .tagline { color: var(--muted); margin: 4px 0 0; }
+  h2 { font-size: 1.25rem; margin: 48px 0 12px; padding-top: 16px; border-top: 1px solid var(--line); }
+  a { color: var(--accent); }
+  .buttons { display: flex; flex-wrap: wrap; gap: 12px; margin: 28px 0; }
+  .btn {
+    display: inline-block; padding: 10px 18px; border-radius: 8px; text-decoration: none;
+    border: 1px solid var(--line); color: var(--fg); font-weight: 600;
+  }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  @media (prefers-color-scheme: dark) { .btn.primary { color: #0d1f14; } }
+  figure { margin: 24px 0; }
+  figure img { width: 100%; border-radius: 8px; border: 1px solid var(--line); display: block; }
+  figcaption { color: var(--muted); font-size: .9rem; margin-top: 6px; }
+  ul { padding-left: 1.2em; }
+  li { margin: 4px 0; }
+  code { background: var(--code); padding: 1px 6px; border-radius: 4px; font-size: .92em; }
+  ol li { margin: 6px 0; }
+  .note { color: var(--muted); font-size: .92rem; }
+  footer { margin-top: 56px; color: var(--muted); font-size: .88rem; border-top: 1px solid var(--line); padding-top: 16px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="img/icon.png" alt="">
+    <div>
+      <h1>Mulot-scan</h1>
+      <p class="tagline">Logiciel libre pour la souris scanner IRIScan Mouse / Dacuda Scanner Mouse, sous Windows et Linux.</p>
+    </div>
+  </header>
+
+  <div class="buttons">
+    <a class="btn primary" href="https://github.com/0ddityspace/mulot-scan/releases/latest">Télécharger</a>
+    <a class="btn" href="https://github.com/0ddityspace/mulot-scan">Code source</a>
+  </div>
+
+  <figure>
+    <img src="img/scan.jpg" alt="Scan en cours : la page se construit pendant que la souris se déplace">
+    <figcaption>La page se construit pendant que vous déplacez la souris.</figcaption>
+  </figure>
+
+  <h2>Fonctions</h2>
+  <ul>
+    <li>Scan en direct, démarré depuis l'interface ou par le bouton Scan de la souris.</li>
+    <li>Suivi par l'image et par les deux capteurs laser de la souris ; position retrouvée après un soulèvement.</li>
+    <li>Recadrage, redressement automatique ou manuel, gomme blanche ou adaptative, annulation.</li>
+    <li>Reconnaissance de texte avec Tesseract.</li>
+    <li>Export PNG, JPEG, TIFF, BMP, PDF, PDF avec texte, TXT et Word.</li>
+    <li>Sous Windows : icône dans la zone de notification et lancement à l'ouverture de session.</li>
+  </ul>
+
+  <h2>Installation</h2>
+  <p><strong>Windows 10 et 11</strong> — lancez <code>mulot-scan-…-setup.exe</code>.
+    Si Windows affiche « Windows a protégé votre ordinateur », cliquez sur
+    <em>Informations complémentaires</em> puis <em>Exécuter quand même</em> : les versions ne sont pas encore signées.
+    Aucun pilote n'est nécessaire.</p>
+  <p><strong>Linux</strong> — décompressez <code>mulot-scan-…-linux-x86_64.tar.gz</code> et lancez <code>mulot-scan</code>
+    (glibc 2.35 ou plus récente).</p>
+  <p class="note">Pour l'OCR, installez aussi
+    <a href="https://tesseract-ocr.github.io/tessdoc/Installation.html">Tesseract</a> avec la langue voulue
+    (sous Windows, l'installeur <a href="https://github.com/UB-Mannheim/tesseract/wiki">UB Mannheim</a>).</p>
+
+  <h2>Utilisation</h2>
+  <ol>
+    <li>Branchez la souris : l'indicateur en haut à droite passe au vert.</li>
+    <li>Posez-la sur le document, cliquez sur <strong>Scanner</strong> ou appuyez sur son bouton Scan.</li>
+    <li>Déplacez-la lentement, en passes qui se chevauchent. Si l'indicateur passe à l'orange, revenez sur une zone déjà scannée.</li>
+    <li>Arrêtez le scan, retouchez, lancez l'OCR et enregistrez.</li>
+  </ol>
+  <p class="note">Pour des fonds bien blancs, faites une fois <em>Réglages → Calibrer</em>,
+    la souris immobile sur une feuille blanche vierge.</p>
+
+  <figure>
+    <img src="img/recadrage.jpg" alt="Éditeur : cadre de recadrage avec poignée de rotation">
+    <figcaption>Recadrer et redresser : faites glisser les bords du cadre, ou la poignée ronde pour tourner l'image.</figcaption>
+  </figure>
+
+  <h2>Raccourcis de l'éditeur</h2>
+  <ul>
+    <li><code>Ctrl+Z</code> / <code>Ctrl+Y</code> : annuler / rétablir</li>
+    <li><code>C</code> recadrer, <code>E</code> gomme, <code>H</code> déplacer, <code>Entrée</code> valider, <code>Échap</code> annuler</li>
+    <li>Molette : zoom ; clic droit ou molette enfoncée : déplacer ; <code>Maj</code> + molette : taille de la gomme</li>
+  </ul>
+
+  <h2>En cas de problème</h2>
+  <ul>
+    <li><strong>« Caméra déjà utilisée »</strong> : fermez les autres fenêtres de Mulot-scan ou le logiciel d'origine.</li>
+    <li><strong>Pointeur figé après un plantage</strong> : relancez Mulot-scan, ou exécutez <code>mulot-scan reset</code>.</li>
+    <li><strong>Texte à l'envers</strong> : décochez la correction du miroir dans les réglages.</li>
+  </ul>
+  <p>Autre souci : <a href="https://github.com/0ddityspace/mulot-scan/issues">ouvrez un ticket</a>.</p>
+
+  <footer>
+    Projet indépendant, sans lien avec I.R.I.S. ni Canon. IRIScan est une marque de ses propriétaires respectifs.
+    Licence MIT ou Apache 2.0.
+  </footer>
+</main>
+</body>
+</html>
