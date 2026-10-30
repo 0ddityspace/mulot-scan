@@ -1,5 +1,9 @@
 //! Post-processing of a finished scan.
 
+mod erase;
+
+pub use erase::{EraseMode, Patch, Stroke, erase};
+
 use image::{GrayImage, RgbImage, imageops};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -32,10 +36,6 @@ impl CropRect {
             x1: c(self.x0.max(self.x1)),
             y1: c(self.y0.max(self.y1)),
         }
-    }
-
-    pub fn is_full(&self) -> bool {
-        *self == Self::FULL
     }
 }
 
@@ -72,6 +72,28 @@ impl Default for Adjustments {
 }
 
 impl Adjustments {
+    /// The same edits on the image turned clockwise by `quarter_turns` and then,
+    /// if `mirror`, flipped left to right — as seen on screen. The straightening
+    /// angle and the crop follow the image instead of being lost: a mirror
+    /// reverses the skew, and turning while mirrored goes the other way round
+    /// in the source.
+    pub fn turned(self, quarter_turns: u8, mirror: bool) -> Self {
+        let q = quarter_turns % 4;
+        let mut out = self;
+        out.quarter_turns = (self.quarter_turns + if self.mirror { 4 - q } else { q }) % 4;
+        let mut c = self.crop.normalized();
+        for _ in 0..q {
+            c = CropRect { x0: 1.0 - c.y1, y0: c.x0, x1: 1.0 - c.y0, y1: c.x1 };
+        }
+        if mirror {
+            out.mirror = !self.mirror;
+            out.angle = -self.angle;
+            c = CropRect { x0: 1.0 - c.x1, x1: 1.0 - c.x0, ..c };
+        }
+        out.crop = c;
+        out
+    }
+
     /// Geometry only (rotation, mirror, fine angle) – the frame on which the crop is defined.
     pub fn geometry(&self, src: &RgbImage) -> RgbImage {
         let mut img = match self.quarter_turns % 4 {
@@ -89,14 +111,45 @@ impl Adjustments {
         img
     }
 
+    /// Maps a point of the edited view back to the source image. `(nx, ny)` is
+    /// normalised (0..1) in the geometry image, or in the cropped image when
+    /// `cropped`; the result is in source pixels (continuous coordinates).
+    pub fn view_to_source(&self, src: (u32, u32), nx: f32, ny: f32, cropped: bool) -> (f32, f32) {
+        let (nx, ny) = if cropped {
+            let c = self.crop.normalized();
+            (c.x0 + nx * (c.x1 - c.x0), c.y0 + ny * (c.y1 - c.y0))
+        } else {
+            (nx, ny)
+        };
+        let (w, h) = (src.0 as f32, src.1 as f32);
+        let (gw, gh) = if self.quarter_turns % 2 == 1 { (h, w) } else { (w, h) };
+        let (mut x, mut y) = (nx * gw, ny * gh);
+        if self.angle.abs() > 0.01 {
+            // Same mapping as `rotate_fine`: output point → input point.
+            let (s, c) = self.angle.to_radians().sin_cos();
+            let (dx, dy) = (x - gw / 2.0, y - gh / 2.0);
+            (x, y) = (c * dx + s * dy + gw / 2.0, -s * dx + c * dy + gh / 2.0);
+        }
+        if self.mirror {
+            x = gw - x;
+        }
+        match self.quarter_turns % 4 {
+            1 => (y, h - x),
+            2 => (w - x, h - y),
+            3 => (w - y, x),
+            _ => (x, y),
+        }
+    }
+
     pub fn apply(&self, src: &RgbImage) -> RgbImage {
         let geo = self.geometry(src);
         let c = self.crop.normalized();
         let (w, h) = geo.dimensions();
-        let x0 = (c.x0 * w as f32) as u32;
-        let y0 = (c.y0 * h as f32) as u32;
-        let x1 = ((c.x1 * w as f32) as u32).clamp(x0 + 1, w);
-        let y1 = ((c.y1 * h as f32) as u32).clamp(y0 + 1, h);
+        // Rounded edges: a crop turned with the image selects the same pixels.
+        let x0 = ((c.x0 * w as f32).round() as u32).min(w - 1);
+        let y0 = ((c.y0 * h as f32).round() as u32).min(h - 1);
+        let x1 = ((c.x1 * w as f32).round() as u32).clamp(x0 + 1, w);
+        let y1 = ((c.y1 * h as f32).round() as u32).clamp(y0 + 1, h);
         let mut img = imageops::crop_imm(&geo, x0, y0, x1 - x0, y1 - y0).to_image();
         tone(&mut img, self.brightness, self.contrast);
         match self.mode {
@@ -276,6 +329,47 @@ mod tests {
                 let (a, b) = (out.get_pixel(x, y).0, reference.get_pixel(x, y).0);
                 assert!(a.iter().zip(b).all(|(&a, b)| a.abs_diff(b) <= 1), "({x}, {y}): {a:?} vs {b:?}");
             }
+        }
+    }
+
+    #[test]
+    fn view_points_map_back_to_the_source_pixel() {
+        // Smooth image whose pixels encode their own coordinates.
+        let src = RgbImage::from_fn(120, 80, |x, y| image::Rgb([x as u8 * 2, y as u8 * 3, 0]));
+        for quarter_turns in 0..4 {
+            for mirror in [false, true] {
+                let adj = Adjustments { quarter_turns, mirror, angle: 4.0, ..Default::default() };
+                let geo = adj.geometry(&src);
+                let (gw, gh) = geo.dimensions();
+                for (gx, gy) in [(30, 20), (gw / 2, gh / 2), (gw - 30, gh - 25)] {
+                    let n = ((gx as f32 + 0.5) / gw as f32, (gy as f32 + 0.5) / gh as f32);
+                    let (sx, sy) = adj.view_to_source((120, 80), n.0, n.1, false);
+                    let p = geo.get_pixel(gx, gy).0;
+                    let (ex, ey) = ((sx - 0.5) * 2.0, (sy - 0.5) * 3.0);
+                    assert!(
+                        (p[0] as f32 - ex).abs() < 3.0 && (p[1] as f32 - ey).abs() < 4.0,
+                        "q={quarter_turns} mirror={mirror} ({gx}, {gy}): pixel {p:?}, mapped to ({sx}, {sy})"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn turning_and_mirroring_keep_the_straightening_and_the_crop() {
+        let src = pattern();
+        let base =
+            Adjustments { angle: 4.0, crop: CropRect { x0: 0.1, y0: 0.2, x1: 0.7, y1: 0.9 }, ..Default::default() };
+        let close = |a: &RgbImage, b: &RgbImage| {
+            assert_eq!(a.dimensions(), b.dimensions());
+            let diff = a.pixels().zip(b.pixels()).filter(|(p, q)| p.0.iter().zip(q.0).any(|(&x, y)| x.abs_diff(y) > 2));
+            assert!(diff.count() * 50 < (a.width() * a.height()) as usize);
+        };
+        // Whatever the starting mirror, each button acts on the image as shown.
+        for start in [base, base.turned(0, true)] {
+            close(&start.turned(1, false).apply(&src), &imageops::rotate90(&start.apply(&src)));
+            close(&start.turned(3, false).apply(&src), &imageops::rotate270(&start.apply(&src)));
+            close(&start.turned(0, true).apply(&src), &imageops::flip_horizontal(&start.apply(&src)));
         }
     }
 

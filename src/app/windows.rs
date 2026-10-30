@@ -23,6 +23,28 @@ impl App {
             });
             self.cfg.imaging.exposure_ms = use_exp.then_some(exp);
             changed |= ui.checkbox(&mut self.cfg.use_mouse_button, "Démarrer/arrêter avec le bouton Scan de la souris").changed();
+            // Hiding the window is not possible on Wayland: Windows only.
+            if cfg!(windows) {
+                changed |= ui
+                    .add_enabled(
+                        self.tray.is_some(),
+                        egui::Checkbox::new(&mut self.cfg.close_to_tray, "Fermer la fenêtre dans la zone de notification"),
+                    )
+                    .on_hover_text("Mulot-scan reste prêt : le bouton Scan de la souris rouvre la fenêtre et lance le scan. Pour quitter, utilisez le menu de l'icône.")
+                    .on_disabled_hover_text("Aucune zone de notification n'est disponible sur ce bureau.")
+                    .changed();
+                let mut autostart = self.autostart;
+                if ui
+                    .checkbox(&mut autostart, "Lancer Mulot-scan à l'ouverture de session")
+                    .on_hover_text("Démarre caché dans la zone de notification, prêt à scanner.")
+                    .changed()
+                {
+                    match crate::autostart::set(autostart) {
+                        Ok(()) => self.autostart = autostart,
+                        Err(e) => self.error = Some(format!("Impossible de modifier le lancement au démarrage : {e:#}")),
+                    }
+                }
+            }
             changed |= ui.checkbox(&mut self.cfg.stitch.mirror, "Corriger l'effet miroir de l'optique (à décocher si le texte apparaît inversé)").changed();
             ui.horizontal(|ui| {
                 ui.label("Orientation du résultat");

@@ -1,6 +1,6 @@
 [package]
 name = "mulot-scan"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 # Imposé par egui/eframe 0.37.
 rust-version = "1.95"
@@ -25,6 +25,8 @@ dirs = "6"
 docx-rs = "0.4"
 which = "8"
 tempfile = "3"
+# Zone de notification ; sous Linux, protocole StatusNotifierItem (KSNI), sans GTK.
+tray-icon = { version = "0.26", default-features = false, features = ["ksni"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 v4l = "0.14"
@@ -39,6 +41,7 @@ windows = { version = "0.62", features = [
     "Win32_Media_MediaFoundation",
     "Win32_Media_KernelStreaming",
     "Win32_Media_DirectShow",
+    "Win32_System_Registry",
 ] }
 
 [profile.release]

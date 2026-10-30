@@ -3,8 +3,6 @@
 use eframe::egui;
 use egui::{Color32, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2};
 
-use crate::edit::CropRect;
-
 use super::{App, Mode};
 
 impl App {
@@ -100,61 +98,5 @@ impl App {
             painter.rect_stroke(r, 0.0, Stroke::new(1.0, Color32::WHITE), StrokeKind::Outside);
         }
         ui.allocate_rect(avail, Sense::hover());
-    }
-
-    pub(super) fn review_view(&mut self, ui: &mut egui::Ui) {
-        let ctx = ui.ctx().clone();
-        self.refresh_edited(&ctx);
-        let Some(tex) = self.edited_tex.clone() else { return };
-        let avail = ui.available_rect_before_wrap();
-        let (response, painter) =
-            ui.allocate_painter(avail.size(), if self.crop_mode { Sense::drag() } else { Sense::hover() });
-        painter.rect_filled(avail, 0.0, Color32::from_gray(50));
-        let ts = tex.size_vec2();
-        let s = (avail.width() / ts.x).min(avail.height() / ts.y).min(4.0);
-        let rect = Rect::from_center_size(avail.center(), ts * s);
-        painter.image(tex.id(), rect, Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)), Color32::WHITE);
-        if self.crop_mode {
-            let to_norm = |p: Pos2| ((p.x - rect.min.x) / rect.width(), (p.y - rect.min.y) / rect.height());
-            if response.drag_started() {
-                self.crop_drag = response.interact_pointer_pos();
-            }
-            if let (Some(start), Some(cur)) = (self.crop_drag, response.interact_pointer_pos())
-                && response.dragged()
-            {
-                let (x0, y0) = to_norm(start);
-                let (x1, y1) = to_norm(cur);
-                self.crop_tmp = CropRect { x0, y0, x1, y1 }.normalized();
-            }
-            if response.drag_stopped() {
-                self.crop_drag = None;
-            }
-            let c = self.crop_tmp.normalized();
-            let cr = Rect::from_min_max(
-                Pos2::new(rect.min.x + c.x0 * rect.width(), rect.min.y + c.y0 * rect.height()),
-                Pos2::new(rect.min.x + c.x1 * rect.width(), rect.min.y + c.y1 * rect.height()),
-            );
-            let shade = Color32::from_black_alpha(140);
-            painter.rect_filled(Rect::from_min_max(rect.min, Pos2::new(rect.max.x, cr.min.y)), 0.0, shade);
-            painter.rect_filled(Rect::from_min_max(Pos2::new(rect.min.x, cr.max.y), rect.max), 0.0, shade);
-            painter.rect_filled(
-                Rect::from_min_max(Pos2::new(rect.min.x, cr.min.y), Pos2::new(cr.min.x, cr.max.y)),
-                0.0,
-                shade,
-            );
-            painter.rect_filled(
-                Rect::from_min_max(Pos2::new(cr.max.x, cr.min.y), Pos2::new(rect.max.x, cr.max.y)),
-                0.0,
-                shade,
-            );
-            painter.rect_stroke(cr, 0.0, Stroke::new(2.0, Color32::from_rgb(80, 170, 255)), StrokeKind::Middle);
-            painter.text(
-                avail.left_top() + Vec2::new(10.0, 10.0),
-                egui::Align2::LEFT_TOP,
-                "Tracez le rectangle à conserver, puis « Valider le recadrage »",
-                egui::FontId::proportional(14.0),
-                Color32::WHITE,
-            );
-        }
     }
 }

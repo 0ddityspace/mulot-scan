@@ -1,12 +1,15 @@
 # mulot-scan — génération des versions publiées (Linux et Windows 11)
 #
-#   make release              Linux portable (Docker) + Windows 11 + sommes SHA-256
+#   make release              Linux portable (Docker) + Windows 11 (archive et
+#                             installateur) + sommes SHA-256
 #   make linux                Linux x86_64 compilé sur cette machine (glibc locale)
 #   make linux-portable       Linux x86_64 compilé dans Docker (Debian 12, glibc ≥ 2.35 requise)
 #   make windows ACCEPT_MSVC_LICENSE=1
 #                             Windows 11 x86_64 (cible MSVC, liée avec lld-link)
 #   make windows WINDOWS_ABI=gnu
 #                             Windows 11 x86_64 avec MinGW-w64 (paquet mingw-w64-gcc)
+#   make windows-installer ACCEPT_MSVC_LICENSE=1
+#                             + installateur Windows (NSIS : makensis, sinon Docker)
 #   make install [PREFIX=~/.local]
 #                             installe le binaire, l'icône et le raccourci (Linux)
 #   make clean | cleanall | distclean
@@ -84,13 +87,13 @@ uninstall:
 	      $(PREFIX)/share/icons/hicolor/256x256/apps/mulot-scan.png \
 	      $(PREFIX)/share/icons/hicolor/512x512/apps/mulot-scan.png
 
-.PHONY: help release linux linux-portable windows windows-toolchain windows-sdk \
+.PHONY: help release linux linux-portable windows windows-installer windows-toolchain windows-sdk \
         mingw-check checksums test clean cleanall distclean
 
 help:
 	@sed -n '2,16s/^# \{0,1\}//p' Makefile
 
-release: linux-portable windows checksums
+release: linux-portable windows-installer checksums
 	@echo "Versions publiées dans $(DIST)/ :"
 	@ls -lh $(DIST)
 
@@ -161,15 +164,35 @@ windows: windows-toolchain $(WIN_DEPS)
 	    $(CARGO) build --release --locked --target $(WINDOWS_TARGET) --target-dir $(WIN_TARGET_DIR)
 	rm -rf $(BUILD)/$(WINDOWS_PKG) && mkdir -p $(BUILD)/$(WINDOWS_PKG) $(DIST)
 	cp $(WIN_EXE) $(BUILD)/$(WINDOWS_PKG)/
+	sh packaging/windows/sign.sh $(BUILD)/$(WINDOWS_PKG)/$(NAME).exe
 	cp $(DOCS) $(BUILD)/$(WINDOWS_PKG)/
 	rm -f $(DIST)/$(WINDOWS_PKG).zip
 	cd $(BUILD) && zip -qr ../$(DIST)/$(WINDOWS_PKG).zip $(WINDOWS_PKG)
 	@echo "→ $(DIST)/$(WINDOWS_PKG).zip"
 
+# Installateur NSIS. Avec un certificat (WINDOWS_CERT_PFX, WINDOWS_CERT_PASSWORD),
+# le programme, l'installateur et le désinstalleur sont signés (en mode Docker,
+# le fichier .pfx doit se trouver dans le dépôt pour être visible du conteneur).
+WIN_SETUP := $(DIST)/$(WINDOWS_PKG)-setup.exe
+NSIS_ARGS  = -V2 -NOCD -DVERSION=$(VERSION) -DROOT=. -DEXEFILE=$(BUILD)/$(WINDOWS_PKG)/$(NAME).exe \
+             -DOUTFILE=$(WIN_SETUP) -DSIGN_CMD="sh packaging/windows/sign.sh" packaging/windows/installer.nsi
+
+windows-installer: windows
+	@if command -v makensis >/dev/null; then \
+	    makensis $(NSIS_ARGS); \
+	else \
+	    echo "makensis introuvable : compilation de l'installateur dans Docker (Debian 12)"; \
+	    $(DOCKER) run --rm -v "$(CURDIR)":/src -w /src \
+	        -e WINDOWS_CERT_PFX -e WINDOWS_CERT_PASSWORD debian:bookworm-slim sh -c \
+	        'apt-get update -qq && apt-get install -y -qq nsis osslsigncode >/dev/null \
+	         && makensis $(NSIS_ARGS) && chown $(shell id -u):$(shell id -g) $(WIN_SETUP)'; \
+	fi
+	@echo "→ $(WIN_SETUP)"
+
 # ---------------------------------------------------------------- divers
 
 checksums:
-	cd $(DIST) && sha256sum *.tar.gz *.zip 2>/dev/null > SHA256SUMS; cat SHA256SUMS
+	cd $(DIST) && sha256sum *.tar.gz *.zip *.exe 2>/dev/null > SHA256SUMS; cat SHA256SUMS
 
 # Nettoyage, du plus léger au plus complet :
 #   clean      archives et dossiers de préparation (dist/)

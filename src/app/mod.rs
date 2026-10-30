@@ -6,24 +6,28 @@ use std::sync::atomic::AtomicBool;
 
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use eframe::egui;
-use egui::{ColorImage, Pos2, TextureHandle, TextureOptions, Vec2};
+use egui::{ColorImage, TextureHandle, TextureOptions, Vec2};
 use image::{RgbImage, RgbaImage};
 use parking_lot::Mutex;
 
 use crate::config::{self, Config};
 use crate::device::{MouseData, ReplaySource, ScanSession, Scanner};
-use crate::edit::{Adjustments, CropRect};
+use crate::edit::Adjustments;
 use crate::export::{self, ExportJob, Format};
 use crate::ocr::Tesseract;
 use crate::stitch::{StepInfo, Stitcher};
 use crate::worker::{self, DeviceManager, DeviceMsg, Preview, UiMsg};
 
 mod autotest;
+mod editor;
 mod panels;
+mod tray;
 mod views;
 mod windows;
 
 use autotest::AutoTest;
+use editor::{Editor, Tool};
+use tray::{Tray, TrayCmd};
 
 const PREVIEW_MAX: u32 = 1600;
 const EDIT_PREVIEW_MAX: u32 = 1800;
@@ -48,6 +52,8 @@ pub struct GuiOptions {
     pub replay: Option<PathBuf>,
     /// Also save the raw stream of every scan in this directory.
     pub record_dir: Option<PathBuf>,
+    /// Start hidden in the notification area (login item).
+    pub start_hidden: bool,
 }
 
 pub struct App {
@@ -55,7 +61,10 @@ pub struct App {
     mode: Mode,
     devices: DeviceManager,
     scanner: Option<Arc<Scanner>>,
+    /// Short connection state shown in the toolbar.
     device_status: String,
+    /// Device details, shown on hover.
+    device_detail: String,
     session: Option<ScanSession>,
     stitcher: Arc<Mutex<Stitcher>>,
     ui_tx: Sender<UiMsg>,
@@ -78,11 +87,9 @@ pub struct App {
     result: Option<Arc<RgbImage>>,
     small: Option<RgbImage>,
     adjust: Adjustments,
+    editor: Editor,
     edited_tex: Option<TextureHandle>,
     edited_dirty: bool,
-    crop_mode: bool,
-    crop_drag: Option<Pos2>,
-    crop_tmp: CropRect,
 
     // OCR
     tesseract: Option<Tesseract>,
@@ -96,6 +103,14 @@ pub struct App {
     show_settings: bool,
     show_about: bool,
     calibration_done: Arc<AtomicBool>,
+    /// Icon in the notification area (absent if the desktop has none).
+    tray: Option<Tray>,
+    /// The window is hidden in the notification area.
+    hidden: bool,
+    /// Quitting for real, not hiding in the notification area.
+    quitting: bool,
+    /// Launched at login (state read from the system).
+    autostart: bool,
     /// Scripted UI walk-through used for automated screenshots (`MULOT_SCAN_AUTOTEST=<dir>`).
     autotest: Option<AutoTest>,
 }
@@ -129,7 +144,8 @@ impl App {
             cfg,
             mode: Mode::Idle,
             scanner: None,
-            device_status: "Recherche de la souris scanner…".into(),
+            device_status: "Recherche de la souris…".into(),
+            device_detail: "Branchez la souris scanner (IRIScan Mouse ou Dacuda Scanner Mouse, USB 274f:c001).".into(),
             session: None,
             stitcher: Arc::new(Mutex::new(stitcher)),
             ui_tx,
@@ -148,11 +164,9 @@ impl App {
             result: None,
             small: None,
             adjust: Adjustments::default(),
+            editor: Editor::default(),
             edited_tex: None,
             edited_dirty: false,
-            crop_mode: false,
-            crop_drag: None,
-            crop_tmp: CropRect::FULL,
             tesseract,
             languages,
             ocr_text: String::new(),
@@ -163,14 +177,23 @@ impl App {
             show_settings: false,
             show_about: false,
             calibration_done: Arc::new(AtomicBool::new(false)),
+            tray: Tray::new(&cc.egui_ctx).map_err(|e| log::warn!("notification area: {e:#}")).ok(),
+            hidden: opts.start_hidden,
+            quitting: false,
+            autostart: crate::autostart::is_enabled(),
             autotest: std::env::var_os("MULOT_SCAN_AUTOTEST").map(|d| AutoTest {
                 dir: PathBuf::from(d),
                 stage: 0,
                 ticks: 0,
             }),
         };
+        if app.hidden && app.tray.is_none() {
+            // Nowhere to hide: show the window after all.
+            app.show_window(&cc.egui_ctx);
+        }
         if app.replay.is_some() {
             app.device_status = "Mode relecture".into();
+            app.device_detail = app.replay.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
         }
         app
     }
@@ -182,6 +205,46 @@ impl App {
     }
 
     // ------------------------------------------------------------------ scanning
+
+    fn show_window(&mut self, ctx: &egui::Context) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        self.hidden = false;
+    }
+
+    fn poll_tray(&mut self, ctx: &egui::Context) {
+        let cmds: Vec<TrayCmd> = self.tray.as_ref().map(|t| t.rx.try_iter().collect()).unwrap_or_default();
+        for cmd in cmds {
+            match cmd {
+                TrayCmd::Show => self.show_window(ctx),
+                TrayCmd::Scan => {
+                    self.show_window(ctx);
+                    if matches!(self.mode, Mode::Idle | Mode::Review) {
+                        self.start_scan(ctx);
+                    }
+                }
+                TrayCmd::Quit => {
+                    self.quitting = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            }
+        }
+        // Closing the window only hides it; the mouse button brings it back.
+        if ctx.input(|i| i.viewport().close_requested())
+            && !self.quitting
+            && self.tray.is_some()
+            && self.cfg.close_to_tray
+            && cfg!(windows)
+        {
+            if self.mode == Mode::Scanning {
+                self.finish_scan(None);
+            }
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            self.hidden = true;
+        }
+    }
 
     fn start_scan(&mut self, ctx: &egui::Context) {
         if self.mode == Mode::Scanning || self.mode == Mode::Calibrating {
@@ -276,8 +339,8 @@ impl App {
         };
         self.result = Some(Arc::new(img));
         self.small = Some(small);
-        self.adjust = Adjustments { mirror: false, ..Adjustments::default() };
-        self.crop_mode = false;
+        self.adjust = Adjustments::default();
+        self.editor.reset(self.adjust);
         self.edited_dirty = true;
         self.ocr_text.clear();
         self.mode = Mode::Review;
@@ -315,16 +378,19 @@ impl App {
         while let Ok(msg) = self.devices.rx.try_recv() {
             match msg {
                 DeviceMsg::Connected(s) => {
-                    self.device_status = format!("Souris scanner connectée ({})", s.description());
+                    self.device_status = "Souris connectée".into();
+                    self.device_detail = s.description();
                     self.scanner = Some(s);
                 }
                 DeviceMsg::Disconnected(e) => {
                     log::info!("device lost: {e}");
                     self.scanner = None;
-                    self.device_status = "Souris scanner déconnectée".into();
+                    self.device_status = "Souris déconnectée".into();
+                    self.device_detail = e;
                 }
                 DeviceMsg::Button => {
                     if self.cfg.use_mouse_button && matches!(self.mode, Mode::Idle | Mode::Review) {
+                        self.show_window(ctx);
                         self.start_scan(ctx);
                     }
                 }
@@ -426,7 +492,7 @@ impl App {
         }
         self.edited_dirty = false;
         let Some(small) = &self.small else { return };
-        let img = if self.crop_mode { self.adjust.geometry(small) } else { self.adjust.apply(small) };
+        let img = if self.editor.tool == Tool::Crop { self.adjust.geometry(small) } else { self.adjust.apply(small) };
         let rgba = RgbaImage::from_fn(img.width(), img.height(), |x, y| {
             let p = img.get_pixel(x, y).0;
             image::Rgba([p[0], p[1], p[2], 255])
@@ -519,9 +585,14 @@ impl App {
 }
 
 impl eframe::App for App {
+    /// Runs even while the window is hidden in the notification area.
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.poll(ctx);
+        self.poll_tray(ctx);
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
-        self.poll(&ctx);
 
         egui::Panel::top("toolbar").show(ui, |ui| {
             ui.add_space(4.0);

@@ -3,6 +3,7 @@
 #![allow(clippy::needless_range_loop)]
 
 mod app;
+mod autostart;
 mod cli;
 mod config;
 mod device;
@@ -27,6 +28,8 @@ Utilisation :
   mulot-scan --replay <flux.mjpg>    interface graphique alimentée par un enregistrement
   mulot-scan --record <dossier>      interface graphique ; chaque scan est aussi
                                     enregistré en flux brut dans le dossier
+  mulot-scan --tray                  démarre caché dans la zone de notification ; le
+                                    bouton Scan de la souris ouvre la fenêtre
   mulot-scan probe                   affiche les informations de la souris
   mulot-scan reset                   remet la souris en mode souris normal
   mulot-scan record <flux.mjpg> [s]  enregistre le flux brut pendant s secondes (défaut 10)
@@ -40,6 +43,7 @@ fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         None => run_gui(app::GuiOptions::default()),
+        Some(autostart::HIDDEN_FLAG) => run_gui(app::GuiOptions { start_hidden: true, ..Default::default() }),
         Some("--replay") => {
             let p = args.get(1).context("--replay needs a file")?;
             run_gui(app::GuiOptions { replay: Some(PathBuf::from(p)), ..Default::default() })
@@ -78,6 +82,7 @@ fn main() -> Result<()> {
 fn run_gui(opts: app::GuiOptions) -> Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
+            .with_visible(!opts.start_hidden)
             .with_title("Mulot-scan")
             .with_app_id("mulot-scan")
             .with_icon(window_icon())

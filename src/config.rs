@@ -25,6 +25,9 @@ pub struct Config {
     pub docx_include_image: bool,
     /// Start/stop scanning with the button of the mouse.
     pub use_mouse_button: bool,
+    /// Closing the window hides it in the notification area (Windows only: a
+    /// Wayland window cannot be hidden).
+    pub close_to_tray: bool,
 }
 
 impl Default for Config {
@@ -40,6 +43,7 @@ impl Default for Config {
             last_dir: None,
             docx_include_image: false,
             use_mouse_button: true,
+            close_to_tray: cfg!(windows),
         }
     }
 }

@@ -3,11 +3,11 @@
 use eframe::egui;
 use egui::{Color32, Sense, Vec2};
 
-use crate::edit::{Adjustments, ColorMode, CropRect};
+use crate::edit::{Adjustments, ColorMode};
 use crate::export::Format;
 use crate::ocr::{self};
 
-use super::{App, Mode};
+use super::{App, Mode, Tool};
 
 impl App {
     pub(super) fn toolbar(&mut self, ui: &mut egui::Ui) {
@@ -56,12 +56,12 @@ impl App {
                 self.show_about = true;
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let (color, text) = if self.scanner.is_some() || self.replay.is_some() {
-                    (Color32::from_rgb(60, 170, 90), self.device_status.as_str())
+                let color = if self.scanner.is_some() || self.replay.is_some() {
+                    Color32::from_rgb(60, 170, 90)
                 } else {
-                    (Color32::from_rgb(200, 140, 40), self.device_status.as_str())
+                    Color32::from_rgb(200, 140, 40)
                 };
-                ui.label(text);
+                ui.label(&self.device_status).on_hover_text(&self.device_detail);
                 status_dot(ui, color);
             });
         });
@@ -101,97 +101,83 @@ impl App {
 
     pub(super) fn side_panel(&mut self, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical().show(ui, |ui| {
-            ui.heading("Image");
-            ui.horizontal(|ui| {
-                if ui.button("Pivoter à gauche").clicked() {
-                    self.adjust.quarter_turns = (self.adjust.quarter_turns + 3) % 4;
-                    self.adjust.crop = CropRect::FULL;
-                    self.edited_dirty = true;
-                }
-                if ui.button("Pivoter à droite").clicked() {
-                    self.adjust.quarter_turns = (self.adjust.quarter_turns + 1) % 4;
-                    self.adjust.crop = CropRect::FULL;
-                    self.edited_dirty = true;
-                }
-                if ui.button("Miroir").clicked() {
-                    self.adjust.mirror = !self.adjust.mirror;
-                    self.adjust.crop = CropRect::FULL;
-                    self.edited_dirty = true;
-                }
-            });
-            ui.horizontal(|ui| {
-                ui.label("Redresser");
-                if ui.add(egui::Slider::new(&mut self.adjust.angle, -15.0..=15.0).suffix("°").step_by(0.1)).changed() {
-                    self.edited_dirty = true;
-                }
-            });
-            if ui.button("Redresser automatiquement").clicked()
-                && let Some(small) = &self.small
-            {
-                let base = Adjustments { angle: 0.0, crop: CropRect::FULL, ..self.adjust };
-                let geo = base.geometry(small);
-                self.adjust.angle = crate::edit::detect_skew(&geo);
-                self.adjust.crop = CropRect::FULL;
-                self.edited_dirty = true;
-            }
-            ui.horizontal(|ui| {
-                let label = if self.crop_mode { "Valider le recadrage" } else { "Recadrer" };
-                if ui.button(label).clicked() {
-                    if self.crop_mode {
-                        self.adjust.crop = self.crop_tmp.normalized();
-                    } else {
-                        self.crop_tmp = self.adjust.crop;
-                    }
-                    self.crop_mode = !self.crop_mode;
-                    self.edited_dirty = true;
-                }
-                if ui.add_enabled(!self.adjust.crop.is_full() || self.crop_mode, egui::Button::new("Annuler")).clicked()
-                {
-                    self.adjust.crop = CropRect::FULL;
-                    self.crop_tmp = CropRect::FULL;
-                    self.crop_mode = false;
-                    self.edited_dirty = true;
-                }
-            });
-            ui.add_space(4.0);
-            let mut changed = false;
-            ui.horizontal(|ui| {
-                ui.label("Luminosité");
-                changed |= ui.add(egui::Slider::new(&mut self.adjust.brightness, -100.0..=100.0)).changed();
-            });
-            ui.horizontal(|ui| {
-                ui.label("Contraste");
-                changed |= ui.add(egui::Slider::new(&mut self.adjust.contrast, -100.0..=100.0)).changed();
-            });
-            ui.horizontal(|ui| {
-                changed |= ui.radio_value(&mut self.adjust.mode, ColorMode::Color, "Couleur").changed();
-                changed |= ui.radio_value(&mut self.adjust.mode, ColorMode::Gray, "Gris").changed();
-                changed |= ui.radio_value(&mut self.adjust.mode, ColorMode::BlackWhite, "Noir et blanc").changed();
-            });
-            if self.adjust.mode == ColorMode::BlackWhite {
+            self.tool_options(ui);
+            egui::CollapsingHeader::new(egui::RichText::new("Image").heading()).default_open(true).show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label("Seuil");
-                    changed |= ui.add(egui::Slider::new(&mut self.adjust.bw_level, 0.0..=100.0)).changed();
+                    if ui.button("Pivoter à gauche").clicked() {
+                        self.turn(3, false);
+                    }
+                    if ui.button("Pivoter à droite").clicked() {
+                        self.turn(1, false);
+                    }
+                    if ui.button("Miroir").clicked() {
+                        self.turn(0, true);
+                    }
                 });
-            }
-            if ui.button("Réinitialiser les retouches").clicked() {
-                self.adjust = Adjustments::default();
-                self.crop_mode = false;
-                changed = true;
-            }
-            if changed {
-                self.edited_dirty = true;
-            }
-            if let Some(r) = &self.result {
-                let (w, h) = r.dimensions();
-                let dpi = self.cfg.dpi.max(1) as f32;
-                ui.weak(format!(
-                    "{w} × {h} px ({:.1} × {:.1} cm à {} ppp)",
-                    w as f32 / dpi * 2.54,
-                    h as f32 / dpi * 2.54,
-                    self.cfg.dpi
-                ));
-            }
+                ui.horizontal(|ui| {
+                    if ui.button("Recadrer / redresser…").on_hover_text("C").clicked() {
+                        self.set_tool(Tool::Crop);
+                    }
+                    if ui.button("Redresser automatiquement").clicked() {
+                        self.auto_straighten();
+                    }
+                });
+                if ui.button("Gomme…").on_hover_text("E").clicked() {
+                    self.set_tool(Tool::Erase);
+                }
+                if let Some(r) = &self.result {
+                    let (w, h) = r.dimensions();
+                    let c = self.adjust.crop.normalized();
+                    let (gw, gh) = if self.adjust.quarter_turns % 2 == 1 { (h, w) } else { (w, h) };
+                    let (w, h) = ((gw as f32 * (c.x1 - c.x0)) as u32, (gh as f32 * (c.y1 - c.y0)) as u32);
+                    let dpi = self.cfg.dpi.max(1) as f32;
+                    ui.weak(format!(
+                        "{w} × {h} px ({:.1} × {:.1} cm à {} ppp)",
+                        w as f32 / dpi * 2.54,
+                        h as f32 / dpi * 2.54,
+                        self.cfg.dpi
+                    ));
+                }
+            });
+            egui::CollapsingHeader::new(egui::RichText::new("Couleurs").heading()).default_open(true).show(ui, |ui| {
+                let mut changed = false;
+                egui::Grid::new("tone").num_columns(2).show(ui, |ui| {
+                    ui.label("Luminosité");
+                    changed |= ui.add(egui::Slider::new(&mut self.adjust.brightness, -100.0..=100.0)).changed();
+                    ui.end_row();
+                    ui.label("Contraste");
+                    changed |= ui.add(egui::Slider::new(&mut self.adjust.contrast, -100.0..=100.0)).changed();
+                    ui.end_row();
+                });
+                ui.horizontal(|ui| {
+                    changed |= ui.radio_value(&mut self.adjust.mode, ColorMode::Color, "Couleur").changed();
+                    changed |= ui.radio_value(&mut self.adjust.mode, ColorMode::Gray, "Gris").changed();
+                    changed |= ui
+                        .radio_value(&mut self.adjust.mode, ColorMode::BlackWhite, "Noir et blanc")
+                        .on_hover_text("Seuil adaptatif, idéal pour le texte")
+                        .changed();
+                });
+                if self.adjust.mode == ColorMode::BlackWhite {
+                    ui.horizontal(|ui| {
+                        ui.label("Seuil");
+                        changed |= ui.add(egui::Slider::new(&mut self.adjust.bw_level, 0.0..=100.0)).changed();
+                    });
+                }
+                if ui.button("Réinitialiser les couleurs").clicked() {
+                    let d = Adjustments::default();
+                    self.adjust = Adjustments {
+                        brightness: d.brightness,
+                        contrast: d.contrast,
+                        mode: d.mode,
+                        bw_level: d.bw_level,
+                        ..self.adjust
+                    };
+                    changed = true;
+                }
+                if changed {
+                    self.edited_dirty = true;
+                }
+            });
 
             ui.separator();
             ui.heading("Texte (OCR)");

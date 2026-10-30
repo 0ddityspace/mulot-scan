@@ -16,6 +16,9 @@ IRIScan Mouse, aussi vendue sous le nom Dacuda Scanner Mouse (identifiant USB
 * Scan en direct : la mosaïque se construit pendant que vous déplacez la souris.
   Un indicateur signale un mouvement trop rapide ou une position perdue.
 * Démarrage et arrêt avec le bouton Scan de la souris ou depuis l'interface.
+* Icône dans la zone de notification. Sous Windows, la fenêtre peut s'y fermer
+  et le programme peut se lancer à l'ouverture de session : un appui sur le
+  bouton Scan rouvre alors la fenêtre et lance le scan.
 * Détection du soulèvement de la souris : rien n'est ajouté tant qu'elle est en
   l'air. Une fois reposée sur une zone déjà scannée, sa position est retrouvée
   automatiquement, même décalée ou tournée d'environ 30°.
@@ -24,8 +27,14 @@ IRIScan Mouse, aussi vendue sous le nom Dacuda Scanner Mouse (identifiant USB
   souris donnent la prédiction de mouvement, rotation comprise, et prennent le
   relais sur les zones blanches.
 * Correction automatique de l'éclairage et de la couleur, ou calibrage sur feuille blanche.
-* Retouches : rotation, redressement automatique, recadrage, luminosité, contraste,
-  couleur, niveaux de gris ou noir et blanc adaptatif.
+* Éditeur d'image avec annulation et rétablissement (Ctrl+Z, Ctrl+Y), zoom à la
+  molette et déplacement au clic droit :
+  * cadre de recadrage à poignées, avec une poignée ronde pour redresser l'image
+    et une grille d'alignement, ainsi que le redressement automatique ;
+  * gomme blanche, ou adaptative qui reconstitue le fond et le grain du papier
+    autour de la zone effacée ;
+  * rotation, miroir, luminosité, contraste, couleur, niveaux de gris ou noir et
+    blanc adaptatif.
 * Reconnaissance de texte (OCR) avec Tesseract, texte modifiable et copiable.
 * Export en PNG, JPEG, TIFF, BMP, PDF image, PDF avec texte, TXT et Word (.docx).
 * Ouverture d'une image existante pour l'OCR ou l'export.
@@ -57,6 +66,15 @@ pour la session graphique, sinon ajoutez-le au groupe `video`.
 
 ### Windows
 
+Le plus simple est l'installateur `mulot-scan-…-windows-x86_64-setup.exe` des
+releases : il installe le programme dans `Program Files`, crée les raccourcis et
+s'enregistre dans « Applications installées ». Tant que les versions publiées ne
+sont pas signées, Windows SmartScreen affiche « Windows a protégé votre
+ordinateur » au premier lancement : cliquez sur **Informations
+complémentaires**, puis **Exécuter quand même**.
+
+Pour compiler soi-même :
+
 1. Installez les « Build Tools for Visual Studio », charge de travail C++.
 2. Installez Tesseract, par exemple avec l'installeur UB Mannheim
    (<https://github.com/UB-Mannheim/tesseract/wiki>), en cochant les langues voulues.
@@ -79,7 +97,8 @@ Le `Makefile` produit les archives dans `dist/` depuis Linux :
 ```sh
 make linux-portable                 # Linux x86_64, compilé dans Docker, glibc ≥ 2.35
 make windows ACCEPT_MSVC_LICENSE=1  # Windows 11 x86_64, exécutable autonome
-make release ACCEPT_MSVC_LICENSE=1  # les deux + dist/SHA256SUMS
+make windows-installer ACCEPT_MSVC_LICENSE=1  # + installateur NSIS
+make release ACCEPT_MSVC_LICENSE=1  # tout + dist/SHA256SUMS
 make help                           # toutes les cibles
 ```
 
@@ -89,6 +108,11 @@ make help                           # toutes les cibles
   paquet `lld`. Les bibliothèques du SDK Windows sont téléchargées une fois
   auprès de Microsoft par l'outil `xwin`, d'où l'acceptation explicite de leur
   licence avec `ACCEPT_MSVC_LICENSE=1`.
+* L'installateur est construit avec NSIS (`makensis`) ; s'il n'est pas installé,
+  le Makefile le lance dans un conteneur Docker Debian.
+* Avec un certificat de signature de code (`WINDOWS_CERT_PFX` pour le chemin du
+  `.pfx`, `WINDOWS_CERT_PASSWORD`), le programme, l'installateur et le
+  désinstalleur sont signés par `packaging/windows/sign.sh` (osslsigncode).
 * Variante sans SDK Microsoft : `make windows WINDOWS_ABI=gnu`, après avoir
   installé MinGW-w64 (Arch : `sudo pacman -S mingw-w64-gcc`).
 * Sans rustup, le Makefile télécharge dans `build/toolchain` le compilateur Rust
@@ -102,16 +126,18 @@ make help                           # toutes les cibles
 
 * `.github/workflows/ci.yml` compile et teste le projet sous Linux et Windows à
   chaque push et à chaque pull request.
-* `.github/workflows/release.yml` produit les archives Linux et Windows 11. Il
-  compile la version Linux dans le conteneur Debian 12 et la version Windows
-  nativement, avec le runtime lié statiquement.
+* `.github/workflows/release.yml` produit les archives Linux et Windows 11 et
+  l'installateur Windows. Il compile la version Linux dans le conteneur Debian 12
+  et la version Windows nativement, avec le runtime lié statiquement. Si les
+  secrets `WINDOWS_CERT_PFX_BASE64` et `WINDOWS_CERT_PASSWORD` sont définis dans
+  le dépôt, les exécutables Windows sont signés.
 
 Pour publier une version, mettez à jour `version` dans `Cargo.toml`, puis poussez
 le tag correspondant :
 
 ```sh
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 La release GitHub est alors créée avec les deux archives et `SHA256SUMS`. Le
@@ -143,6 +169,7 @@ mulot-scan                         interface graphique
 mulot-scan --replay flux.mjpg      interface alimentée par un enregistrement
 mulot-scan --record captures       interface ; chaque scan est aussi enregistré
                                    (captures/scan-001.mjpg, scan-002.mjpg…)
+mulot-scan --tray                  démarre caché dans la zone de notification (Windows)
 mulot-scan probe                   informations sur la souris
 mulot-scan reset                   remet la souris en mode souris normal
 mulot-scan record flux.mjpg 10     enregistre 10 s de flux brut
@@ -158,10 +185,10 @@ figé. Relancez mulot-scan ou exécutez `mulot-scan reset`.
 |---|---|
 | `src/device/` | Protocole matériel. `linux.rs` utilise V4L2 et l'ioctl UVC, `windows.rs` utilise Media Foundation et IKsControl. |
 | `src/stitch/` | Assemblage. `stitcher.rs` gère le suivi de position, `register.rs` la corrélation de phase, `canvas.rs` la mosaïque en tuiles, `flat.rs` la correction d'éclairage, `laser.rs` le décodage des capteurs laser, `lift.rs` la détection du soulèvement et `output.rs` l'image finale. |
-| `src/edit.rs` | Retouches |
+| `src/edit/` | Retouches. `erase.rs` contient la gomme. |
 | `src/ocr.rs` | Pilotage de Tesseract |
 | `src/export.rs` | Formats de sortie |
-| `src/app/` | Interface egui. `mod.rs` contient l'état et les actions, `panels.rs`, `views.rs` et `windows.rs` l'affichage. |
+| `src/app/` | Interface egui. `mod.rs` contient l'état et les actions, `editor.rs` l'éditeur d'image, `panels.rs`, `views.rs` et `windows.rs` l'affichage. |
 | `src/worker.rs` | Fils de traitement : détection de la souris, scan, calibrage |
 | `src/cli.rs` | Sous-commandes `probe`, `record` et `stitch` |
 | `examples/synth.rs` | Génère un enregistrement synthétique à partir d'une image, pour les tests |
