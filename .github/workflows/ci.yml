@@ -32,7 +32,11 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: clippy, rustfmt
+
+      - name: Formatage
+        if: runner.os == 'Linux'
+        run: cargo fmt --check
 
       - uses: Swatinem/rust-cache@v2
 

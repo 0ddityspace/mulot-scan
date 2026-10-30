@@ -19,7 +19,7 @@ use crossbeam_channel::{Receiver, Sender, unbounded};
 use image::RgbImage;
 use serde::{Deserialize, Serialize};
 
-pub use frame::{FrameParser, MouseData};
+pub use frame::{FRAME_HEIGHT, FRAME_WIDTH, FrameParser, MouseData};
 pub use protocol::Mcu;
 
 pub const VENDOR_ID: u16 = 0x274f;
@@ -80,9 +80,6 @@ pub struct Scanner {
     mcu: Mcu,
     pub info: protocol::FirmwareInfo,
 }
-
-unsafe impl Send for Scanner {}
-unsafe impl Sync for Scanner {}
 
 impl Scanner {
     pub fn open() -> Result<Self> {
@@ -285,7 +282,7 @@ fn capture_loop(
                 continue;
             }
         };
-        if image.width() != frame::FRAME_WIDTH || image.height() != frame::FRAME_HEIGHT {
+        if image.width() != FRAME_WIDTH || image.height() != FRAME_HEIGHT {
             continue;
         }
         let f = Frame { index, image: Arc::new(image), data };

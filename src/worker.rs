@@ -234,7 +234,7 @@ fn make_preview(stitcher: &Mutex<Stitcher>, max_dim: u32) -> Option<Preview> {
     let q = st.settings.output_quarter_turns;
     let unrotated = image.dimensions();
     let image = crate::stitch::orient_image(q, &image);
-    Some(Preview { image, bounds: b, scale, frame_size: (640, 296), quarter_turns: q, unrotated })
+    Some(Preview { image, bounds: b, scale, frame_size: crate::stitch::STITCH_FRAME, quarter_turns: q, unrotated })
 }
 
 /// Collects frames of a white sheet and computes a flat-field correction.
@@ -279,7 +279,7 @@ pub fn spawn_calibration_worker(
                 Some(e) => Err(e),
                 None => {
                     let refs: Vec<&RgbImage> = frames.iter().map(|f| f.as_ref()).collect();
-                    FlatField::from_white_frames(&refs).ok_or_else(|| "pas assez d'images".to_string())
+                    FlatField::from_white_frames(&refs).map_err(|e| e.to_string())
                 }
             };
             let _ = tx.send(UiMsg::Calibrated(result));

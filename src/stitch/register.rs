@@ -39,6 +39,8 @@ pub struct Shift {
 }
 
 /// Cached FFT plans and windows for a fixed image size.
+///
+/// Holds no mutable state, so one correlator can serve several threads.
 pub struct PhaseCorrelator {
     w: usize,
     h: usize,
@@ -47,8 +49,23 @@ pub struct PhaseCorrelator {
     row_inv: Arc<dyn Fft<f32>>,
     col_inv: Arc<dyn Fft<f32>>,
     window: Vec<f32>,
-    scratch: Vec<Complex32>,
-    col: Vec<Complex32>,
+}
+
+/// Runs `fft` in place on every `n`-long line of `data`.
+fn fft_lines(fft: &dyn Fft<f32>, data: &mut [Complex32], n: usize) {
+    let mut scratch = vec![Complex32::default(); fft.get_inplace_scratch_len()];
+    for line in data.chunks_exact_mut(n) {
+        fft.process_with_scratch(line, &mut scratch);
+    }
+}
+
+/// Transposes a `w`×`h` row-major matrix into `out` (`h`×`w`).
+fn transpose(src: &[Complex32], out: &mut [Complex32], w: usize, h: usize) {
+    for (y, row) in src.chunks_exact(w).enumerate() {
+        for (x, &v) in row.iter().enumerate() {
+            out[x * h + y] = v;
+        }
+    }
 }
 
 impl PhaseCorrelator {
@@ -69,37 +86,21 @@ impl PhaseCorrelator {
             row_inv: p.plan_fft_inverse(w),
             col_inv: p.plan_fft_inverse(h),
             window,
-            scratch: Vec::new(),
-            col: vec![Complex32::default(); h],
         }
     }
 
-    fn fft2(&mut self, data: &mut [Complex32], inverse: bool) {
+    fn fft2(&self, data: &mut [Complex32], inverse: bool) {
         let (w, h) = (self.w, self.h);
-        let (row, col) = if inverse {
-            (self.row_inv.clone(), self.col_inv.clone())
-        } else {
-            (self.row_fwd.clone(), self.col_fwd.clone())
-        };
-        let need = row.get_inplace_scratch_len().max(col.get_inplace_scratch_len());
-        if self.scratch.len() < need {
-            self.scratch.resize(need, Complex32::default());
-        }
-        for r in data.chunks_exact_mut(w) {
-            row.process_with_scratch(r, &mut self.scratch[..row.get_inplace_scratch_len()]);
-        }
-        for x in 0..w {
-            for y in 0..h {
-                self.col[y] = data[y * w + x];
-            }
-            col.process_with_scratch(&mut self.col, &mut self.scratch[..col.get_inplace_scratch_len()]);
-            for y in 0..h {
-                data[y * w + x] = self.col[y];
-            }
-        }
+        let (row, col) = if inverse { (&self.row_inv, &self.col_inv) } else { (&self.row_fwd, &self.col_fwd) };
+        fft_lines(row.as_ref(), data, w);
+        // Columns are transformed as rows of the transposed matrix (contiguous memory).
+        let mut t = vec![Complex32::default(); w * h];
+        transpose(data, &mut t, w, h);
+        fft_lines(col.as_ref(), &mut t, h);
+        transpose(&t, data, h, w);
     }
 
-    fn spectrum(&mut self, img: &Gray) -> Vec<Complex32> {
+    fn spectrum(&self, img: &Gray) -> Vec<Complex32> {
         debug_assert_eq!((img.w, img.h), (self.w, self.h));
         let n = img.px.len() as f32;
         let mean = img.px.iter().sum::<f32>() / n;
@@ -110,16 +111,16 @@ impl PhaseCorrelator {
     }
 
     /// Estimates the translation between `reference` and `current`.
-    pub fn correlate(&mut self, reference: &Gray, current: &Gray) -> Shift {
-        let a = self.spectrum(reference);
-        let b = self.spectrum(current);
+    pub fn correlate(&self, reference: &Gray, current: &Gray) -> Shift {
+        let (a, b) = rayon::join(|| self.spectrum(reference), || self.spectrum(current));
         let mut r: Vec<Complex32> = a
             .iter()
             .zip(&b)
             .map(|(x, y)| {
                 let c = y * x.conj();
-                let m = c.norm();
-                if m > 1e-12 { c / m } else { Complex32::default() }
+                // Not `norm()`: it calls libm's `hypotf`, several times slower.
+                let m2 = c.norm_sqr();
+                if m2 > 1e-24 { c * m2.sqrt().recip() } else { Complex32::default() }
             })
             .collect();
         self.fft2(&mut r, true);
@@ -185,7 +186,7 @@ mod tests {
         let reference = pattern(w, h, 0.0, 0.0);
         // current(x) = reference(x + d)
         let current = pattern(w, h, 7.0, -4.0);
-        let mut pc = PhaseCorrelator::new(w, h);
+        let pc = PhaseCorrelator::new(w, h);
         let s = pc.correlate(&reference, &current);
         assert!((s.dx - 7.0).abs() < 0.3, "{s:?}");
         assert!((s.dy + 4.0).abs() < 0.3, "{s:?}");

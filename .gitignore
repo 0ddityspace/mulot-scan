@@ -14,6 +14,8 @@
 # --- Données de test ---
 # enregistrements bruts de la souris : ils peuvent contenir des documents personnels
 *.mjpg
+# enregistrements de diagnostic (`mulot-scan --record captures`) et leurs résultats
+/captures/
 
 # --- Éditeurs et systèmes ---
 .idea/

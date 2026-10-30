@@ -2,6 +2,8 @@
 name = "mulot-scan"
 version = "0.1.0"
 edition = "2024"
+# Imposé par egui/eframe 0.37.
+rust-version = "1.95"
 description = "Mulot-scan: unofficial cross-platform software for scanner mice (compatible with IRIScan Mouse / Dacuda Scanner Mouse)"
 license = "MIT OR Apache-2.0"
 exclude = ["/build", "/dist", "/winapp"]
@@ -13,6 +15,7 @@ env_logger = "0.11"
 crossbeam-channel = "0.5"
 parking_lot = "0.12"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tiff", "bmp"] }
+rayon = "1"
 rustfft = "6"
 eframe = { version = "0.37", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
 rfd = "0.17"

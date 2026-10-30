@@ -119,7 +119,12 @@ pub fn load_flat_field() -> Result<Option<FlatField>> {
             [f(0), f(1), f(2)]
         })
         .collect();
-    Ok(Some(FlatField { width: w, height: h, gains }))
+    // Calibrations made before the illumination model became robust may contain
+    // the texture of the sheet (text, show-through): clean them on load.
+    let flat = FlatField { width: w, height: h, gains }
+        .sanitized()
+        .with_context(|| format!("calibration {} unusable, please calibrate again", p.display()))?;
+    Ok(Some(flat))
 }
 
 pub fn delete_flat_field() -> Result<()> {

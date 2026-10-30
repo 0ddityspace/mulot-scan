@@ -1,6 +1,7 @@
 //! Post-processing of a finished scan.
 
-use image::{GrayImage, Luma, Rgb, RgbImage, imageops};
+use image::{GrayImage, RgbImage, imageops};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -110,10 +111,8 @@ impl Adjustments {
 }
 
 fn gray_to_rgb(g: &GrayImage) -> RgbImage {
-    RgbImage::from_fn(g.width(), g.height(), |x, y| {
-        let v = g.get_pixel(x, y).0[0];
-        Rgb([v, v, v])
-    })
+    let raw = g.as_raw().iter().flat_map(|&v| [v, v, v]).collect();
+    RgbImage::from_raw(g.width(), g.height(), raw).expect("buffer size matches")
 }
 
 fn tone(img: &mut RgbImage, brightness: f32, contrast: f32) {
@@ -137,27 +136,31 @@ pub fn rotate_fine(src: &RgbImage, angle: f32, bg: [u8; 3]) -> RgbImage {
     let (w, h) = src.dimensions();
     let (s, c) = angle.sin_cos();
     let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
-    RgbImage::from_fn(w, h, |x, y| {
-        let (dx, dy) = (x as f32 + 0.5 - cx, y as f32 + 0.5 - cy);
-        let u = c * dx + s * dy + cx - 0.5;
-        let v = -s * dx + c * dy + cy - 0.5;
-        if u < 0.0 || v < 0.0 || u >= (w - 1) as f32 || v >= (h - 1) as f32 {
-            return Rgb(bg);
+    let (umax, vmax) = ((w - 1) as f32, (h - 1) as f32);
+    let (raw, stride) = (src.as_raw(), w as usize * 3);
+    let mut out = RgbImage::new(w, h);
+    // Interactive (runs on every slider move): rows in parallel.
+    out.par_chunks_exact_mut(stride).enumerate().for_each(|(y, row)| {
+        let dy = y as f32 + 0.5 - cy;
+        for (x, px) in row.as_chunks_mut::<3>().0.iter_mut().enumerate() {
+            let dx = x as f32 + 0.5 - cx;
+            let u = c * dx + s * dy + cx - 0.5;
+            let v = -s * dx + c * dy + cy - 0.5;
+            if u < 0.0 || v < 0.0 || u >= umax || v >= vmax {
+                *px = bg;
+                continue;
+            }
+            let (iu, iv) = (u as usize, v as usize);
+            let (au, av) = (u - iu as f32, v - iv as f32);
+            let i = iv * stride + iu * 3;
+            let k = [(1.0 - au) * (1.0 - av), au * (1.0 - av), (1.0 - au) * av, au * av];
+            *px = std::array::from_fn(|ch| {
+                let p = |o: usize| raw[i + o + ch] as f32;
+                (p(0) * k[0] + p(3) * k[1] + p(stride) * k[2] + p(stride + 3) * k[3] + 0.5) as u8
+            });
         }
-        let (iu, iv) = (u as u32, v as u32);
-        let (au, av) = (u - iu as f32, v - iv as f32);
-        let p = |x: u32, y: u32| src.get_pixel(x, y).0;
-        let (a, b, cc, d) = (p(iu, iv), p(iu + 1, iv), p(iu, iv + 1), p(iu + 1, iv + 1));
-        let mut out = [0u8; 3];
-        for k in 0..3 {
-            let v = a[k] as f32 * (1.0 - au) * (1.0 - av)
-                + b[k] as f32 * au * (1.0 - av)
-                + cc[k] as f32 * (1.0 - au) * av
-                + d[k] as f32 * au * av;
-            out[k] = v.round() as u8;
-        }
-        Rgb(out)
-    })
+    });
+    out
 }
 
 /// Local-mean thresholding robust to uneven illumination.
@@ -165,27 +168,30 @@ pub fn adaptive_threshold(g: &GrayImage, level: f32) -> GrayImage {
     let (w, h) = g.dimensions();
     let (wu, hu) = (w as usize, h as usize);
     // Integral image.
+    let src = g.as_raw();
     let mut integral = vec![0u64; (wu + 1) * (hu + 1)];
-    for y in 0..hu {
+    for (y, line) in src.chunks_exact(wu).enumerate() {
         let mut row = 0u64;
-        for x in 0..wu {
-            row += g.get_pixel(x as u32, y as u32).0[0] as u64;
+        for (x, &v) in line.iter().enumerate() {
+            row += v as u64;
             integral[(y + 1) * (wu + 1) + x + 1] = integral[y * (wu + 1) + x + 1] + row;
         }
     }
     let r = ((w.min(h) / 40).max(8)) as usize;
     let k = 0.70 + level.clamp(0.0, 100.0) / 100.0 * 0.25;
-    GrayImage::from_fn(w, h, |x, y| {
-        let (x, y) = (x as usize, y as usize);
-        let (x0, y0) = (x.saturating_sub(r), y.saturating_sub(r));
-        let (x1, y1) = ((x + r + 1).min(wu), (y + r + 1).min(hu));
-        let sum = integral[y1 * (wu + 1) + x1] + integral[y0 * (wu + 1) + x0]
-            - integral[y0 * (wu + 1) + x1]
-            - integral[y1 * (wu + 1) + x0];
-        let mean = sum as f32 / ((x1 - x0) * (y1 - y0)) as f32;
-        let v = g.get_pixel(x as u32, y as u32).0[0] as f32;
-        Luma([if v < mean * k { 0 } else { 255 }])
-    })
+    let mut out = GrayImage::new(w, h);
+    out.par_chunks_exact_mut(wu).enumerate().for_each(|(y, row)| {
+        let (y0, y1) = (y.saturating_sub(r), (y + r + 1).min(hu));
+        for (x, o) in row.iter_mut().enumerate() {
+            let (x0, x1) = (x.saturating_sub(r), (x + r + 1).min(wu));
+            let sum = integral[y1 * (wu + 1) + x1] + integral[y0 * (wu + 1) + x0]
+                - integral[y0 * (wu + 1) + x1]
+                - integral[y1 * (wu + 1) + x0];
+            let mean = sum as f32 / ((x1 - x0) * (y1 - y0)) as f32;
+            *o = if (src[y * wu + x] as f32) < mean * k { 0 } else { 255 };
+        }
+    });
+    out
 }
 
 /// Estimates the skew angle (degrees) of text lines with a projection profile.
@@ -238,4 +244,52 @@ pub fn detect_skew(img: &RgbImage) -> f32 {
     }
     // Rotating by -skew straightens the lines.
     -best.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pattern() -> RgbImage {
+        RgbImage::from_fn(64, 48, |x, y| image::Rgb([(x * 4) as u8, (y * 5) as u8, ((x + y) * 2) as u8]))
+    }
+
+    #[test]
+    fn rotate_fine_by_zero_keeps_the_image() {
+        let img = pattern();
+        let out = rotate_fine(&img, 0.0, [255, 0, 0]);
+        // The last row/column fall outside the interpolation domain and get the background.
+        for (x, y, p) in out.enumerate_pixels() {
+            let expected = if x == 63 || y == 47 { [255, 0, 0] } else { img.get_pixel(x, y).0 };
+            assert_eq!(p.0, expected, "({x}, {y})");
+        }
+    }
+
+    #[test]
+    fn rotate_fine_half_turn_matches_rotate180() {
+        let img = pattern();
+        let out = rotate_fine(&img, std::f32::consts::PI, [0, 0, 0]);
+        let reference = imageops::rotate180(&img);
+        // Same pixels away from the border, within interpolation rounding.
+        for y in 2..46 {
+            for x in 2..62 {
+                let (a, b) = (out.get_pixel(x, y).0, reference.get_pixel(x, y).0);
+                assert!(a.iter().zip(b).all(|(&a, b)| a.abs_diff(b) <= 1), "({x}, {y}): {a:?} vs {b:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn adaptive_threshold_separates_text_from_paper() {
+        let mut g = GrayImage::from_pixel(200, 100, image::Luma([220]));
+        // A 3-pixel stroke, like a letter (large dark areas are not "text").
+        for y in 49..52 {
+            for x in 50..150 {
+                g.put_pixel(x, y, image::Luma([30]));
+            }
+        }
+        let bw = adaptive_threshold(&g, 50.0);
+        assert_eq!(bw.get_pixel(100, 50).0[0], 0);
+        assert_eq!(bw.get_pixel(10, 10).0[0], 255);
+    }
 }

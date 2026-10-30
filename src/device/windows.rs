@@ -45,7 +45,8 @@ pub struct WinXu {
     node: u32,
 }
 
-// COM objects created in the MTA may be used from any thread.
+// SAFETY: COM objects created in the multithreaded apartment (see
+// `init_com_mf`) may be used from any thread.
 unsafe impl Send for WinXu {}
 unsafe impl Sync for WinXu {}
 
@@ -117,6 +118,7 @@ pub struct WindowsBackend {
     symlink: String,
 }
 
+// SAFETY: as for `WinXu`, the media source lives in the multithreaded apartment.
 unsafe impl Send for WindowsBackend {}
 unsafe impl Sync for WindowsBackend {}
 
@@ -224,6 +226,8 @@ pub struct WinStream {
     stream: u32,
 }
 
+// SAFETY: the source reader is created in the multithreaded apartment and is
+// only used by the capture thread that owns the stream.
 unsafe impl Send for WinStream {}
 
 impl FrameSource for WinStream {

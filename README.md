@@ -20,7 +20,9 @@ IRIScan Mouse, aussi vendue sous le nom Dacuda Scanner Mouse (identifiant USB
   l'air. Une fois reposée sur une zone déjà scannée, sa position est retrouvée
   automatiquement, même décalée ou tournée d'environ 30°.
 * Assemblage par recalage d'image (translation et rotation) sur la mosaïque déjà
-  construite, avec fusion progressive des bords.
+  construite, avec fusion progressive des bords. Les deux capteurs laser de la
+  souris donnent la prédiction de mouvement, rotation comprise, et prennent le
+  relais sur les zones blanches.
 * Correction automatique de l'éclairage et de la couleur, ou calibrage sur feuille blanche.
 * Retouches : rotation, redressement automatique, recadrage, luminosité, contraste,
   couleur, niveaux de gris ou noir et blanc adaptatif.
@@ -35,7 +37,7 @@ Dropbox, Flickr, Google Translate) ne sont pas reprises.
 
 ### Prérequis communs
 
-* Rust 1.85 ou plus récent, via <https://rustup.rs>.
+* Rust 1.95 ou plus récent, via <https://rustup.rs>.
 * Tesseract, facultatif mais nécessaire pour l'OCR.
 
 ### Linux
@@ -128,7 +130,8 @@ Sous Linux, `make install` installe le programme, son icône et son raccourci
 dans `~/.local`. Ajoutez `PREFIX=/usr/local` avec sudo pour une installation globale.
 
 Pour des fonds bien blancs, faites une fois **Réglages → Calibrer** avec la souris
-immobile sur une feuille blanche. Le résultat est tourné de 90° vers la gauche
+immobile sur une feuille blanche vierge, sans impression au verso. Le texte ou les
+taches éventuels sont ignorés, mais une feuille trop marquée est refusée. Le résultat est tourné de 90° vers la gauche
 par défaut. Les réglages permettent de changer cette orientation, de régler la
 sensibilité au soulèvement et de désactiver la correction du miroir si le texte
 apparaît inversé.
@@ -138,6 +141,8 @@ apparaît inversé.
 ```text
 mulot-scan                         interface graphique
 mulot-scan --replay flux.mjpg      interface alimentée par un enregistrement
+mulot-scan --record captures       interface ; chaque scan est aussi enregistré
+                                   (captures/scan-001.mjpg, scan-002.mjpg…)
 mulot-scan probe                   informations sur la souris
 mulot-scan reset                   remet la souris en mode souris normal
 mulot-scan record flux.mjpg 10     enregistre 10 s de flux brut
@@ -152,21 +157,26 @@ figé. Relancez mulot-scan ou exécutez `mulot-scan reset`.
 | Module | Rôle |
 |---|---|
 | `src/device/` | Protocole matériel. `linux.rs` utilise V4L2 et l'ioctl UVC, `windows.rs` utilise Media Foundation et IKsControl. |
-| `src/stitch/` | Recalage par corrélation de phase, canevas en tuiles, correction d'éclairage |
+| `src/stitch/` | Assemblage. `stitcher.rs` gère le suivi de position, `register.rs` la corrélation de phase, `canvas.rs` la mosaïque en tuiles, `flat.rs` la correction d'éclairage, `laser.rs` le décodage des capteurs laser, `lift.rs` la détection du soulèvement et `output.rs` l'image finale. |
 | `src/edit.rs` | Retouches |
 | `src/ocr.rs` | Pilotage de Tesseract |
 | `src/export.rs` | Formats de sortie |
-| `src/app.rs`, `src/worker.rs` | Interface egui et fils de traitement |
+| `src/app/` | Interface egui. `mod.rs` contient l'état et les actions, `panels.rs`, `views.rs` et `windows.rs` l'affichage. |
+| `src/worker.rs` | Fils de traitement : détection de la souris, scan, calibrage |
+| `src/cli.rs` | Sous-commandes `probe`, `record` et `stitch` |
 | `examples/synth.rs` | Génère un enregistrement synthétique à partir d'une image, pour les tests |
 
 Le protocole retrouvé est décrit dans [docs/PROTOCOLE.md](docs/PROTOCOLE.md).
 
 ## Limites connues
 
-* Les déplacements mesurés par les capteurs laser sont décodés mais pas encore
-  exploités, car leur sens exact reste à confirmer. Sur une zone totalement unie,
-  comme une grande marge blanche, le suivi visuel peut donc se perdre. Revenez
-  alors sur une zone avec du contenu.
+* Les constantes des capteurs laser (échelle, position) ont été mesurées sur une
+  seule souris. Si le suivi se dégrade sur un autre exemplaire, décochez
+  « Utiliser les capteurs laser » dans les réglages.
+* Après un soulèvement, la position est retrouvée par l'image seule : sur une
+  zone peu marquée, la souris peut être recollée au mauvais endroit.
+* De petits décalages restent visibles entre deux passes éloignées dans le temps,
+  faute d'optimisation globale de la mosaïque.
 * La version Windows compile, mais elle n'a pas encore été testée sur une vraie
   machine Windows.
 * Le calibrage d'usine stocké dans la souris est lu mais pas interprété.

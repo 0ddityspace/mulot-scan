@@ -106,7 +106,7 @@ Chaque octet de données est reconstitué par `unstuff()` dans
 | Octets | Contenu |
 |---|---|
 | 0 | Compteur de trames |
-| 2–13 | Six mots de 16 bits en gros-boutiste. Ce sont probablement les déplacements des deux capteurs laser. |
+| 2–13 | Six mots de 16 bits en gros-boutiste : compteurs cumulés des deux capteurs laser (voir ci-dessous). |
 | 14–15 | Qualité de surface des deux capteurs |
 | 16 | Octet supplémentaire |
 | 17 | Indicateurs (bits 0 à 4) |
@@ -116,8 +116,24 @@ Le logiciel d'origine détecte le soulèvement à partir des capteurs laser, ave
 un seuil `liftoffSensitivityLaser` réglable, de 50 par défaut. mulot-scan applique
 ce seuil aux octets 14 et 15.
 
-Le sens exact des six mots n'a pas pu être établi sans enregistrement en
-mouvement. L'assemblage actuel n'utilise que l'image.
+Les mots 0 et 1 sont les compteurs signés du capteur A, les mots 3 et 4 ceux du
+capteur B ; ils reviennent à zéro modulo 2¹⁶, il faut donc prendre leurs
+différences d'une trame à l'autre. Il n'y a pas de décalage entre ces compteurs
+et l'image de la même trame. Les mots 2 et 5 n'ont pas été identifiés.
+
+Comparés au mouvement mesuré par recalage d'image sur des scans réels (R² de
+0,94 à 0,99), après retournement vertical et étirement de l'image à pixels
+carrés (×1,08 en hauteur, 296 → 320 lignes) :
+
+| Capteur | Mots (v, u) | Comptes par pixel | Position depuis le centre de l'image |
+|---|---|---|---|
+| A | 0, 1 | 3,47 | (+287, +258) px |
+| B | 3, 4 | 3,28 | (−488, +18) px |
+
+L'écart entre les deux capteurs donne la rotation. Quand la qualité de surface
+d'un capteur tombe sous 40 (règle métallique, surface brillante), ses compteurs
+se figent et il est ignoré ; avec un seul capteur, seule la translation est
+connue. Le code est dans `src/stitch/laser.rs`.
 
 ## Optique
 

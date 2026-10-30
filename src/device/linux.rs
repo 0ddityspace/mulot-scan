@@ -44,10 +44,6 @@ pub struct LinuxXu {
     unit: u8,
 }
 
-// The handle is only a file descriptor; ioctls on it are thread-safe.
-unsafe impl Send for LinuxXu {}
-unsafe impl Sync for LinuxXu {}
-
 impl LinuxXu {
     fn query(&self, selector: u8, query: u8, buf: &mut [u8]) -> Result<()> {
         query_raw(self.device.fd(), self.unit, selector, query, buf)
@@ -174,8 +170,6 @@ impl LinuxBackend {
 pub struct LinuxStream {
     stream: Option<MmapStream<'static>>,
 }
-
-unsafe impl Send for LinuxStream {}
 
 impl FrameSource for LinuxStream {
     fn next_frame(&mut self) -> Result<Option<Vec<u8>>> {
