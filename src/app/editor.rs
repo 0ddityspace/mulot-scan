@@ -257,8 +257,11 @@ impl App {
                 screen.push(p);
             }
             None => {
-                let stroke =
-                    Stroke { points: vec![point], radius: self.editor.brush / src.0 as f32, mode: self.editor.erase_mode };
+                let stroke = Stroke {
+                    points: vec![point],
+                    radius: self.editor.brush / src.0 as f32,
+                    mode: self.editor.erase_mode,
+                };
                 self.editor.stroke = Some((stroke, vec![p]));
             }
         }
