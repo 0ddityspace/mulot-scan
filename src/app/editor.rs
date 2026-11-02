@@ -6,6 +6,7 @@ use std::sync::Arc;
 use eframe::egui;
 use egui::{Color32, CursorIcon, Key, Modifiers, PointerButton, Pos2, Rect, Sense, StrokeKind, Vec2};
 
+use super::icons as ic;
 use crate::edit::{self, Adjustments, CropRect, EraseMode, Patch, Stroke};
 
 use super::App;
@@ -180,6 +181,31 @@ impl App {
         }
     }
 
+    /// Crops to the scanned area without its irregular white border, then to
+    /// the content of the page inside (without its white margins). Keeps the
+    /// current turns and straightening.
+    pub(super) fn auto_crop(&mut self) {
+        let Some(small) = &self.small else { return };
+        // The scanned area, turned like the image (unusable once straightened).
+        let area = match self.scanned_area {
+            Some(a) if self.adjust.angle.abs() < 0.01 => {
+                let mut a = Adjustments { crop: a, ..Adjustments::default() }.turned(self.adjust.quarter_turns, false);
+                if self.adjust.mirror {
+                    a = a.turned(0, true);
+                }
+                a.crop
+            }
+            _ => CropRect::FULL,
+        };
+        let geo = Adjustments { crop: CropRect::FULL, ..self.adjust }.geometry(small);
+        let crop = edit::auto_crop(&geo, Some(area));
+        self.adjust.crop = crop;
+        if self.editor.tool == Tool::Crop {
+            self.editor.crop = crop;
+        }
+        self.edited_dirty = true;
+    }
+
     /// Records the settings in the history once they stop changing.
     fn commit_adjust(&mut self) {
         if self.adjust != self.editor.committed {
@@ -337,11 +363,15 @@ impl App {
     /// Bar above the image: history, tools and zoom.
     fn editor_toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            if ui.add_enabled(self.can_undo(), egui::Button::new("Annuler")).on_hover_text("Ctrl+Z").clicked() {
+            if ui
+                .add_enabled(self.can_undo(), egui::Button::new(ic::label(ic::UNDO, "Annuler")))
+                .on_hover_text("Ctrl+Z")
+                .clicked()
+            {
                 self.undo();
             }
             if ui
-                .add_enabled(!self.editor.redo.is_empty(), egui::Button::new("Rétablir"))
+                .add_enabled(!self.editor.redo.is_empty(), egui::Button::new(ic::label(ic::REDO, "Rétablir")))
                 .on_hover_text("Ctrl+Y ou Ctrl+Maj+Z")
                 .clicked()
             {
@@ -349,24 +379,24 @@ impl App {
             }
             ui.separator();
             let tools = [
-                (Tool::Hand, "Déplacer", "Faire glisser l'image et zoomer à la molette (H)"),
-                (Tool::Crop, "Recadrer / redresser", "Cadre de recadrage et poignée de rotation (C)"),
-                (Tool::Erase, "Gomme", "Effacer une tache, un trait, une marque… (E)"),
+                (Tool::Hand, ic::HAND, "Déplacer", "Faire glisser l'image et zoomer à la molette (H)"),
+                (Tool::Crop, ic::CROP, "Recadrer / redresser", "Cadre de recadrage et poignée de rotation (C)"),
+                (Tool::Erase, ic::ERASER, "Gomme", "Effacer une tache, un trait, une marque… (E)"),
             ];
-            for (tool, label, hint) in tools {
-                if ui.selectable_label(self.editor.tool == tool, label).on_hover_text(hint).clicked() {
+            for (tool, icon, label, hint) in tools {
+                if ui.selectable_label(self.editor.tool == tool, ic::label(icon, label)).on_hover_text(hint).clicked() {
                     self.set_tool(tool);
                 }
             }
             ui.separator();
-            if ui.button("−").on_hover_text("Dézoomer (−)").clicked() {
+            if ui.button(ic::ZOOM_OUT).on_hover_text("Dézoomer (−)").clicked() {
                 self.editor.zoom = (self.editor.zoom / 1.25).max(*ZOOM_RANGE.start());
             }
             ui.label(format!("{:.0} %", self.editor.scale * 100.0));
-            if ui.button("+").on_hover_text("Zoomer (+)").clicked() {
+            if ui.button(ic::ZOOM_IN).on_hover_text("Zoomer (+)").clicked() {
                 self.editor.zoom = (self.editor.zoom * 1.25).min(*ZOOM_RANGE.end());
             }
-            if ui.button("Ajuster").on_hover_text("Voir toute l'image").clicked() {
+            if ui.button(ic::label(ic::FIT, "Ajuster")).on_hover_text("Voir toute l'image").clicked() {
                 self.editor.fit();
             }
         });
@@ -377,7 +407,7 @@ impl App {
         match self.editor.tool {
             Tool::Hand => {}
             Tool::Crop => {
-                tool_frame(ui, "Recadrer et redresser", |ui| {
+                tool_frame(ui, &ic::label(ic::CROP, "Recadrer et redresser"), |ui| {
                     ui.horizontal(|ui| {
                         ui.label("Angle");
                         if ui
@@ -388,7 +418,10 @@ impl App {
                         }
                     });
                     ui.horizontal(|ui| {
-                        if ui.button("Redresser automatiquement").on_hover_text("D'après les lignes de texte").clicked()
+                        if ui
+                            .button(ic::label(ic::ANGLE, "Redresser automatiquement"))
+                            .on_hover_text("D'après les lignes de texte")
+                            .clicked()
                         {
                             self.auto_straighten();
                         }
@@ -398,34 +431,34 @@ impl App {
                         }
                     });
                     ui.horizontal(|ui| {
-                        if ui.button("Pivoter à gauche").clicked() {
+                        if ui.button(ic::label(ic::TURN_LEFT, "Pivoter à gauche")).clicked() {
                             self.turn(3, false);
                         }
-                        if ui.button("Pivoter à droite").clicked() {
+                        if ui.button(ic::label(ic::TURN_RIGHT, "Pivoter à droite")).clicked() {
                             self.turn(1, false);
                         }
-                        if ui.button("Miroir").clicked() {
+                        if ui.button(ic::label(ic::MIRROR, "Miroir")).clicked() {
                             self.turn(0, true);
                         }
                     });
-                    if ui.button("Cadre sur toute l'image").clicked() {
+                    if ui.button(ic::label(ic::FULL_FRAME, "Cadre sur toute l'image")).clicked() {
                         self.editor.crop = CropRect::FULL;
                     }
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
-                        let ok = egui::Button::new(egui::RichText::new("Valider").strong())
+                        let ok = egui::Button::new(egui::RichText::new(ic::label(ic::CHECK, "Valider")).strong())
                             .fill(Color32::from_rgb(30, 110, 60));
                         if ui.add(ok).on_hover_text("Entrée").clicked() {
                             self.validate_crop();
                         }
-                        if ui.button("Annuler").on_hover_text("Échap").clicked() {
+                        if ui.button(ic::label(ic::CANCEL, "Annuler")).on_hover_text("Échap").clicked() {
                             self.cancel_crop();
                         }
                     });
                 });
             }
             Tool::Erase => {
-                tool_frame(ui, "Gomme", |ui| {
+                tool_frame(ui, &ic::label(ic::ERASER, "Gomme"), |ui| {
                     ui.horizontal(|ui| {
                         ui.radio_value(&mut self.editor.erase_mode, EraseMode::Fill, "Adaptative")
                             .on_hover_text("Remplit avec les couleurs et le grain du papier autour");

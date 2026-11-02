@@ -174,10 +174,10 @@ impl WindowsBackend {
         let n = unsafe { topo.NumNodes()? };
         let mut candidates = Vec::new();
         for i in 0..n {
-            if let Ok(t) = unsafe { topo.get_NodeType(i) } {
-                if t == KSNODETYPE_DEV_SPECIFIC {
-                    candidates.push(i);
-                }
+            if let Ok(t) = unsafe { topo.get_NodeType(i) }
+                && t == KSNODETYPE_DEV_SPECIFIC
+            {
+                candidates.push(i);
             }
         }
         // Fall back to every node if the topology does not label it.
