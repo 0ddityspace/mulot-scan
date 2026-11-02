@@ -18,6 +18,10 @@ pub fn probe() -> Result<()> {
     println!("mode : {:#x}  bouton : {}", m.current_mode()?, m.button_pressed()?);
     println!("exposition : {:.3} ms", m.exposure_ms()?);
     m.disable_mouse()?;
+    if std::env::var_os("MULOT_DUMP_USERDATA").is_some() {
+        println!("balance des blancs (b, r, v) : {:?}", m.white_balance());
+        println!("gain brut : {:?}", m.sensor_read(crate::device::protocol::sensor::GAIN));
+    }
     let id = m.read_mouse_id();
     let user = m.read_user_data();
     m.enable_mouse()?;
@@ -31,7 +35,12 @@ pub fn probe() -> Result<()> {
         Err(e) => println!("authentification impossible : {e:#}"),
     }
     match user {
-        Ok(Some(d)) => println!("données de calibrage d'usine : {} octets", d.len()),
+        Ok(Some(d)) => {
+            println!("données de calibrage d'usine : {} octets", d.len());
+            if let Some(p) = std::env::var_os("MULOT_DUMP_USERDATA") {
+                std::fs::write(p, &d)?;
+            }
+        }
         Ok(None) => println!("pas de données de calibrage d'usine"),
         Err(e) => println!("lecture du calibrage impossible : {e:#}"),
     }
@@ -77,12 +86,16 @@ fn drain(mut session: ScanSession, secs: f64, verbose: bool) -> usize {
 pub fn stitch_offline(input: &Path, output: &Path, trace: Option<&Path>) -> Result<()> {
     let cfg = config::Config::load();
     let mut st = stitch::Stitcher::new(cfg.stitch);
-    st.flat = config::load_flat_field().ok().flatten();
+    // The recording does not say which sensor white balance it was made with:
+    // assume the configured one.
+    st.flat = config::load_flat_field(cfg.imaging.effective_white_balance()).ok().flatten();
     let src = ReplaySource::open(input, 10_000.0)?;
     let total = src.len();
     let session = ScanSession::spawn(Box::new(src), None, None)?;
     let t0 = Instant::now();
     let mut lost = 0;
+    let mut push_ms: Vec<f64> = Vec::new();
+    let mut preview_ms: Vec<f64> = Vec::new();
     let mut csv = match trace {
         Some(p) => {
             let mut w =
@@ -90,7 +103,7 @@ pub fn stitch_offline(input: &Path, output: &Path, trace: Option<&Path>) -> Resu
             writeln!(
                 w,
                 "frame,x,y,theta,confidence,speed,lost,lifted,searching,laser_only,\
-                 w0,w1,w2,w3,w4,w5,quality0,quality1,extra,flags,dropped"
+                 w0,w1,w2,w3,w4,w5,quality0,quality1,extra,flags,dropped,brightness"
             )?;
             Some(w)
         }
@@ -99,7 +112,18 @@ pub fn stitch_offline(input: &Path, output: &Path, trace: Option<&Path>) -> Resu
     loop {
         match session.events.recv() {
             Ok(DeviceEvent::Frame(f)) => {
+                let t = Instant::now();
                 let info = st.push(&f);
+                push_ms.push(t.elapsed().as_secs_f64() * 1e3);
+                // Cost of the live preview (rendered every ~150 ms in the GUI, under the lock).
+                if push_ms.len().is_multiple_of(5) {
+                    let t = Instant::now();
+                    if let Some(b) = st.canvas().bounds() {
+                        let scale = (1600.0 / b.width().max(b.height()) as f32).min(1.0);
+                        let _ = st.canvas().render(Some(b), scale, [0, 0, 0, 0]);
+                    }
+                    preview_ms.push(t.elapsed().as_secs_f64() * 1e3);
+                }
                 if info.lost {
                     lost += 1;
                 }
@@ -108,7 +132,7 @@ pub fn stitch_offline(input: &Path, output: &Path, trace: Option<&Path>) -> Resu
                     let words = d.words.map(|v| (v as i16).to_string()).join(",");
                     writeln!(
                         w,
-                        "{},{:.2},{:.2},{:.5},{:.1},{:.1},{},{},{},{},{words},{},{},{},{},{}",
+                        "{},{:.2},{:.2},{:.5},{:.1},{:.1},{},{},{},{},{words},{},{},{},{},{},{:.1}",
                         f.index,
                         p.x,
                         p.y,
@@ -123,7 +147,8 @@ pub fn stitch_offline(input: &Path, output: &Path, trace: Option<&Path>) -> Resu
                         d.surface_quality[1],
                         d.extra,
                         d.flags,
-                        d.frame_dropped as u8
+                        d.frame_dropped as u8,
+                        stitch::mean_brightness(&f.image)
                     )?;
                 }
             }
@@ -131,7 +156,9 @@ pub fn stitch_offline(input: &Path, output: &Path, trace: Option<&Path>) -> Resu
             Ok(_) => {}
         }
     }
-    let img = st.finish(cfg.auto_levels).context("nothing stitched")?;
+    println!("temps par image : {}", timing_summary(&mut push_ms));
+    println!("rendu de l'aperçu : {}", timing_summary(&mut preview_ms));
+    let (img, _) = st.finish_with_area(cfg.auto_levels).context("nothing stitched")?;
     img.save(output)?;
     println!(
         "{} images sur {total} assemblées en {:.1} s ({lost} sans recalage) → {} ({}×{})",
@@ -142,4 +169,14 @@ pub fn stitch_offline(input: &Path, output: &Path, trace: Option<&Path>) -> Resu
         img.height()
     );
     Ok(())
+}
+
+/// Median, 99th percentile and maximum of durations in milliseconds.
+fn timing_summary(ms: &mut [f64]) -> String {
+    if ms.is_empty() {
+        return "-".into();
+    }
+    ms.sort_by(f64::total_cmp);
+    let q = |p: f64| ms[((ms.len() - 1) as f64 * p).round() as usize];
+    format!("médiane {:.1} ms, 99 % {:.1} ms, max {:.1} ms", q(0.5), q(0.99), q(1.0))
 }

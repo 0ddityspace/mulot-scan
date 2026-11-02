@@ -247,6 +247,84 @@ pub fn adaptive_threshold(g: &GrayImage, level: f32) -> GrayImage {
     out
 }
 
+/// Frame around the content of a scan (text, pictures), without the white
+/// margins of the paper nor the unscanned background; `None` if the image is
+/// blank.
+pub fn detect_content(img: &RgbImage) -> Option<CropRect> {
+    let (w, h) = (img.width() as usize, img.height() as usize);
+    if w < 8 || h < 8 {
+        return None;
+    }
+    let luma = |p: &image::Rgb<u8>| (p.0[0] as u32 * 299 + p.0[1] as u32 * 587 + p.0[2] as u32 * 114) / 1000;
+    // Paper: the bright part of the image.
+    let mut hist = [0u32; 256];
+    for p in img.pixels() {
+        hist[luma(p) as usize] += 1;
+    }
+    let target = (w * h) as u32 / 10;
+    let (mut acc, mut paper) = (0, 255);
+    for (v, &c) in hist.iter().enumerate().rev() {
+        acc += c;
+        if acc >= target {
+            paper = v as u32;
+            break;
+        }
+    }
+    // Content: clearly darker than the paper, or clearly coloured. The faint
+    // rims at the edges of the scanned frames are neither.
+    let ink = |p: &image::Rgb<u8>| {
+        let (mx, mn) = (p.0.iter().max().copied().unwrap_or(0), p.0.iter().min().copied().unwrap_or(0));
+        luma(p) + 60 < paper || mx - mn > 70
+    };
+    let (mut rows, mut cols) = (vec![0u32; h], vec![0u32; w]);
+    for (x, y, p) in img.enumerate_pixels() {
+        if ink(p) {
+            rows[y as usize] += 1;
+            cols[x as usize] += 1;
+        }
+    }
+    // Lines with a few content pixels only (dust, noise) do not count.
+    let span = |counts: &[u32], len: usize| {
+        let min = (len as f32 * 0.004).max(3.0) as u32;
+        let first = counts.iter().position(|&c| c >= min)?;
+        let last = counts.iter().rposition(|&c| c >= min)?;
+        Some((first, last + 1))
+    };
+    let (x0, x1) = span(&cols, h)?;
+    let (y0, y1) = span(&rows, w)?;
+    // A small margin around the content.
+    let m = 0.02 * w.max(h) as f32;
+    Some(
+        CropRect {
+            x0: (x0 as f32 - m) / w as f32,
+            y0: (y0 as f32 - m) / h as f32,
+            x1: (x1 as f32 + m) / w as f32,
+            y1: (y1 as f32 + m) / h as f32,
+        }
+        .normalized(),
+    )
+}
+
+/// Automatic crop of `img`: `area` (the scanned part without its irregular
+/// border, if known), then the content inside it (without white margins).
+pub fn auto_crop(img: &RgbImage, area: Option<CropRect>) -> CropRect {
+    let area = area.unwrap_or(CropRect::FULL).normalized();
+    let (w, h) = (img.width() as f32, img.height() as f32);
+    let (ax, ay) = ((area.x0 * w).round() as u32, (area.y0 * h).round() as u32);
+    let aw = (((area.x1 - area.x0) * w).round() as u32).clamp(1, img.width().saturating_sub(ax).max(1));
+    let ah = (((area.y1 - area.y0) * h).round() as u32).clamp(1, img.height().saturating_sub(ay).max(1));
+    let inside = imageops::crop_imm(img, ax, ay, aw, ah).to_image();
+    match detect_content(&inside) {
+        Some(c) => CropRect {
+            x0: area.x0 + c.x0 * (area.x1 - area.x0),
+            y0: area.y0 + c.y0 * (area.y1 - area.y0),
+            x1: area.x0 + c.x1 * (area.x1 - area.x0),
+            y1: area.y0 + c.y1 * (area.y1 - area.y0),
+        },
+        None => area,
+    }
+}
+
 /// Estimates the skew angle (degrees) of text lines with a projection profile.
 pub fn detect_skew(img: &RgbImage) -> f32 {
     let g = imageops::grayscale(img);
@@ -302,6 +380,30 @@ pub fn detect_skew(img: &RgbImage) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn content_frame_ignores_margins_and_faint_marks() {
+        let mut img = RgbImage::from_pixel(400, 300, image::Rgb([250, 250, 248]));
+        // A text block, a faint rim (frame edge) and a speck of dust.
+        for y in 100..150 {
+            for x in 120..300 {
+                if (x / 3 + y / 4) % 2 == 0 {
+                    img.put_pixel(x, y, image::Rgb([30, 30, 30]));
+                }
+            }
+        }
+        for y in 0..300 {
+            img.put_pixel(20, y, image::Rgb([235, 230, 205]));
+        }
+        img.put_pixel(380, 20, image::Rgb([0, 0, 0]));
+        let c = detect_content(&img).expect("content");
+        let px = |v: f32, n: u32| (v * n as f32).round() as i32;
+        assert!((px(c.x0, 400) - (120 - 8)).abs() <= 2, "{c:?}");
+        assert!((px(c.x1, 400) - (300 + 8)).abs() <= 2, "{c:?}");
+        assert!((px(c.y0, 300) - (100 - 8)).abs() <= 2, "{c:?}");
+        assert!((px(c.y1, 300) - (150 + 8)).abs() <= 2, "{c:?}");
+        assert!(detect_content(&RgbImage::from_pixel(100, 100, image::Rgb([255, 255, 255]))).is_none());
+    }
 
     fn pattern() -> RgbImage {
         RgbImage::from_fn(64, 48, |x, y| image::Rgb([(x * 4) as u8, (y * 5) as u8, ((x + y) * 2) as u8]))

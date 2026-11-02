@@ -10,7 +10,7 @@ use image::{RgbImage, RgbaImage};
 use parking_lot::Mutex;
 
 use crate::device::{DeviceEvent, MouseData, Scanner};
-use crate::stitch::{Bounds, FlatField, StepInfo, Stitcher};
+use crate::stitch::{Bounds, FlatField, Levels, StepInfo, Stitcher, apply_levels};
 
 // ------------------------------------------------------------------ device manager
 
@@ -142,6 +142,9 @@ pub enum UiMsg {
     },
     /// Last camera frame (for the live camera view / diagnostics).
     Camera(Arc<RgbImage>),
+    /// Last frame as stitched, drawn at its pose over the mosaic preview so
+    /// that the live view follows the mouse at the camera's frame rate.
+    Live(Arc<RgbImage>),
     Button,
     Stopped(Option<String>),
     Calibrated(Result<FlatField, String>),
@@ -154,6 +157,7 @@ pub fn spawn_scan_worker(
     tx: Sender<UiMsg>,
     ctx: egui::Context,
     max_preview: u32,
+    auto_levels: bool,
 ) {
     std::thread::Builder::new()
         .name("scan-worker".into())
@@ -165,6 +169,8 @@ pub fn spawn_scan_worker(
             let mut fps = 0.0f32;
             let mut error = None;
             let mut dirty = false;
+            // Automatic levels of the mosaic, also applied to the live frames.
+            let mut levels: Option<Levels> = None;
             loop {
                 let ev = match events.recv_timeout(Duration::from_millis(200)) {
                     Ok(ev) => ev,
@@ -177,11 +183,18 @@ pub fn spawn_scan_worker(
                         if events.len() > 4 && f.index % 2 == 1 {
                             continue;
                         }
-                        let (info, frames) = {
+                        let (info, live, frames) = {
                             let mut st = stitcher.lock();
-                            let info = st.push(&f);
-                            (info, st.frame_count())
+                            let (info, live) = st.push_with_image(&f);
+                            (info, live, st.frame_count())
                         };
+                        if !info.lifted && !info.searching {
+                            let mut live = live;
+                            if let Some(lut) = &levels {
+                                live.pixels_mut().for_each(|p| apply_levels(lut, &mut p.0));
+                            }
+                            let _ = tx.send(UiMsg::Live(Arc::new(live)));
+                        }
                         dirty = true;
                         fps_n += 1;
                         if fps_t0.elapsed() > Duration::from_millis(500) {
@@ -208,16 +221,16 @@ pub fn spawn_scan_worker(
                     DeviceEvent::Error(e) => error = Some(e),
                     DeviceEvent::Stopped => break,
                 }
-                if dirty && last_preview.elapsed() > Duration::from_millis(150) {
+                if dirty && last_preview.elapsed() > Duration::from_millis(100) {
                     last_preview = Instant::now();
                     dirty = false;
-                    if let Some(p) = make_preview(&stitcher, max_preview) {
+                    if let Some(p) = make_preview(&stitcher, max_preview, auto_levels.then_some(&mut levels)) {
                         let _ = tx.send(UiMsg::Preview(Box::new(p)));
                     }
                 }
                 ctx.request_repaint();
             }
-            if let Some(p) = make_preview(&stitcher, max_preview) {
+            if let Some(p) = make_preview(&stitcher, max_preview, auto_levels.then_some(&mut levels)) {
                 let _ = tx.send(UiMsg::Preview(Box::new(p)));
             }
             let _ = tx.send(UiMsg::Stopped(error));
@@ -226,12 +239,22 @@ pub fn spawn_scan_worker(
         .expect("spawning scan worker");
 }
 
-fn make_preview(stitcher: &Mutex<Stitcher>, max_dim: u32) -> Option<Preview> {
-    let st = stitcher.lock();
-    let b = st.canvas().bounds()?;
-    let scale = (max_dim as f32 / b.width().max(b.height()) as f32).min(1.0);
-    let image = st.canvas().render(Some(b), scale, [0, 0, 0, 0])?;
-    let q = st.settings.output_quarter_turns;
+/// Renders the mosaic for display. With `levels`, the automatic levels of the
+/// final image are computed on it, applied, and stored (for the live frames).
+fn make_preview(stitcher: &Mutex<Stitcher>, max_dim: u32, levels: Option<&mut Option<Levels>>) -> Option<Preview> {
+    let (b, scale, mut image, q) = {
+        let st = stitcher.lock();
+        let b = st.canvas().bounds()?;
+        let scale = (max_dim as f32 / b.width().max(b.height()) as f32).min(1.0);
+        let image = st.canvas().render(Some(b), scale, [0, 0, 0, 0])?;
+        (b, scale, image, st.settings.output_quarter_turns)
+    };
+    if let Some(levels) = levels {
+        *levels = crate::stitch::levels(image.pixels().filter(|p| p.0[3] > 0).map(|p| [p.0[0], p.0[1], p.0[2]]));
+        if let Some(lut) = levels {
+            image.pixels_mut().filter(|p| p.0[3] > 0).for_each(|p| apply_levels(lut, &mut p.0));
+        }
+    }
     let unrotated = image.dimensions();
     let image = crate::stitch::orient_image(q, &image);
     Some(Preview { image, bounds: b, scale, frame_size: crate::stitch::STITCH_FRAME, quarter_turns: q, unrotated })

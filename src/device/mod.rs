@@ -53,8 +53,22 @@ pub struct ImagingSettings {
     pub exposure_ms: Option<f64>,
     /// Analog gain 1.0..=32.0.
     pub gain: Option<f64>,
-    /// Raw white balance gains (blue, red, green).
+    /// Raw white balance gains (blue, red, green); `None` = [`DEFAULT_WHITE_BALANCE`].
     pub white_balance: Option<(u8, u8, u8)>,
+}
+
+/// Sensor channel gains (blue, red, green) giving a neutral, unclipped white
+/// sheet. The firmware default (64, 64, 64) makes paper yellow-green: green
+/// clips on white while blue stays at half scale and clips to 0 in dark ink.
+pub const DEFAULT_WHITE_BALANCE: (u8, u8, u8) = (77, 50, 45);
+/// White balance of the firmware, used by recordings and calibrations made
+/// before the gains were set.
+pub const FIRMWARE_WHITE_BALANCE: (u8, u8, u8) = (64, 64, 64);
+
+impl ImagingSettings {
+    pub fn effective_white_balance(&self) -> (u8, u8, u8) {
+        self.white_balance.unwrap_or(DEFAULT_WHITE_BALANCE)
+    }
 }
 
 /// One decoded frame.
@@ -117,11 +131,18 @@ impl Scanner {
             if let Some(g) = settings.gain {
                 mcu.set_gain(g)?;
             }
-            if let Some((b, r, g)) = settings.white_balance {
-                mcu.set_white_balance(b, r, g)?;
-            }
             Ok(())
         })();
+        // After a previous session the sensor does not answer before it
+        // streams again: then the gains are set once streaming runs.
+        let (b, r, g) = settings.effective_white_balance();
+        let white_balance = match mcu.set_white_balance(b, r, g) {
+            Ok(()) => None,
+            Err(e) => {
+                log::debug!("balance des blancs différée : {e:#}");
+                Some((b, r, g))
+            }
+        };
         if let Err(e) = setup {
             let _ = mcu.enable_mouse();
             return Err(e);
@@ -137,7 +158,7 @@ impl Scanner {
             Some(p) => Some(std::fs::File::create(p).with_context(|| format!("creating {}", p.display()))?),
             None => None,
         };
-        ScanSession::spawn(stream, Some(mcu), recorder)
+        ScanSession::spawn_with(stream, Some(mcu), recorder, white_balance)
     }
 
     /// Polls the scan button (call outside of a scan session, e.g. from a timer).
@@ -201,16 +222,22 @@ pub struct ScanSession {
 impl ScanSession {
     /// Starts a capture thread on `source`. When `mcu` is given, scan mode is
     /// entered once streaming runs and mouse mode is restored at the end.
-    pub fn spawn(
+    pub fn spawn(source: Box<dyn FrameSource>, mcu: Option<Mcu>, recorder: Option<std::fs::File>) -> Result<Self> {
+        Self::spawn_with(source, mcu, recorder, None)
+    }
+
+    /// Like [`ScanSession::spawn`]; `white_balance` is set once streaming runs.
+    fn spawn_with(
         mut source: Box<dyn FrameSource>,
         mcu: Option<Mcu>,
         mut recorder: Option<std::fs::File>,
+        white_balance: Option<(u8, u8, u8)>,
     ) -> Result<Self> {
         let (tx, rx) = unbounded();
         let stop = Arc::new(AtomicBool::new(false));
         let stop2 = stop.clone();
         let thread = std::thread::Builder::new().name("scanner-capture".into()).spawn(move || {
-            let result = capture_loop(&mut *source, mcu.as_ref(), &stop2, &tx, recorder.as_mut());
+            let result = capture_loop(&mut *source, mcu.as_ref(), &stop2, &tx, recorder.as_mut(), white_balance);
             drop(source);
             if let Some(m) = &mcu
                 && let Err(e) = m.enable_mouse()
@@ -245,6 +272,7 @@ fn capture_loop(
     stop: &AtomicBool,
     tx: &Sender<DeviceEvent>,
     mut recorder: Option<&mut std::fs::File>,
+    white_balance: Option<(u8, u8, u8)>,
 ) -> Result<()> {
     use std::io::Write;
     let mut parser = FrameParser::new();
@@ -265,6 +293,9 @@ fn capture_loop(
         if !scan_mode {
             // Streaming runs: switch the MCU to scan mode (illumination + sensor data).
             if let Some(m) = mcu {
+                if let Some((b, r, g)) = white_balance {
+                    m.set_white_balance(b, r, g).context("setting the sensor white balance")?;
+                }
                 m.start_scan_mode()?;
             }
             scan_mode = true;

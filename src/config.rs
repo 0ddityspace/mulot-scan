@@ -68,7 +68,10 @@ impl Config {
     }
 }
 
-const FLAT_MAGIC: &[u8; 8] = b"MULOTFF1";
+/// Calibration file: magic, then the sensor white balance it was made with.
+const FLAT_MAGIC: &[u8; 8] = b"MULOTFF2";
+/// Calibration files without white balance (made with the firmware's).
+const FLAT_MAGIC_V1: &[u8; 8] = b"MULOTFF1";
 /// Magic of calibration files written before the project was renamed.
 const OLD_FLAT_MAGIC: &[u8; 8] = b"IRISFF01";
 
@@ -76,10 +79,12 @@ fn flat_path() -> PathBuf {
     config_dir().join("flatfield.bin")
 }
 
-pub fn save_flat_field(f: &FlatField) -> Result<()> {
+/// Saves a calibration made with the sensor white balance `wb`.
+pub fn save_flat_field(f: &FlatField, wb: (u8, u8, u8)) -> Result<()> {
     std::fs::create_dir_all(config_dir())?;
     let mut out = std::io::BufWriter::new(std::fs::File::create(flat_path())?);
     out.write_all(FLAT_MAGIC)?;
+    out.write_all(&[wb.0, wb.1, wb.2, 0])?;
     out.write_all(&f.width.to_le_bytes())?;
     out.write_all(&f.height.to_le_bytes())?;
     for g in &f.gains {
@@ -91,15 +96,26 @@ pub fn save_flat_field(f: &FlatField) -> Result<()> {
     Ok(())
 }
 
-pub fn load_flat_field() -> Result<Option<FlatField>> {
+/// Loads the calibration, if it was made with the sensor white balance `wb`
+/// (another balance changes the colour of the sheet, so it would not fit).
+pub fn load_flat_field(wb: (u8, u8, u8)) -> Result<Option<FlatField>> {
     let p = flat_path();
     if !p.exists() {
         return Ok(None);
     }
     let mut data = Vec::new();
     std::fs::File::open(&p)?.read_to_end(&mut data).context("reading calibration")?;
-    if data.len() < 16 || (&data[..8] != FLAT_MAGIC && &data[..8] != OLD_FLAT_MAGIC) {
+    if data.len() < 16 {
         bail!("invalid calibration file {}", p.display());
+    }
+    let (made_with, data) = match &data[..8] {
+        m if m == FLAT_MAGIC && data.len() >= 12 => ((data[8], data[9], data[10]), &data[4..]),
+        m if m == FLAT_MAGIC_V1 || m == OLD_FLAT_MAGIC => (crate::device::FIRMWARE_WHITE_BALANCE, &data[..]),
+        _ => bail!("invalid calibration file {}", p.display()),
+    };
+    if made_with != wb {
+        log::warn!("calibrage fait avec une autre balance des blancs du capteur ({made_with:?}) : ignoré");
+        return Ok(None);
     }
     let w = u32::from_le_bytes(data[8..12].try_into()?);
     let h = u32::from_le_bytes(data[12..16].try_into()?);

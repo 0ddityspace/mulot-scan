@@ -5,11 +5,11 @@
 | Module | Rôle |
 |---|---|
 | `src/device/` | Protocole matériel. `linux.rs` utilise V4L2 et l'ioctl UVC, `windows.rs` utilise Media Foundation et IKsControl. |
-| `src/stitch/` | Assemblage. `stitcher.rs` gère le suivi de position, `register.rs` la corrélation de phase, `canvas.rs` la mosaïque en tuiles, `flat.rs` la correction d'éclairage, `laser.rs` le décodage des capteurs laser, `lift.rs` la détection du soulèvement et `output.rs` l'image finale. |
+| `src/stitch/` | Assemblage. `stitcher.rs` gère le suivi de position, `register.rs` la corrélation de phase, `canvas.rs` la mosaïque en tuiles, `flat.rs` la correction d'éclairage, `laser.rs` le décodage des capteurs laser, `lift.rs` la détection du soulèvement, `locate.rs` la recherche de la position après un levé (sur toute la mosaïque, avec un index de vignettes), `graph.rs` l'alignement global (images clés, recouvrements entre passages, ajustement de toutes les poses puis nouveau rendu de l'image finale) et `output.rs` les niveaux automatiques et la courbe de tons. |
 | `src/edit/` | Retouches. `erase.rs` contient la gomme. |
 | `src/ocr.rs` | Pilotage de Tesseract |
 | `src/export.rs` | Formats de sortie |
-| `src/app/` | Interface egui. `mod.rs` contient l'état et les actions, `editor.rs` l'éditeur d'image, `tray.rs` la zone de notification, `panels.rs`, `views.rs` et `windows.rs` l'affichage. |
+| `src/app/` | Interface egui. `mod.rs` contient l'état et les actions, `editor.rs` l'éditeur d'image, `tray.rs` la zone de notification, `panels.rs`, `views.rs` et `windows.rs` l'affichage, `icons.rs` les icônes (sous-ensemble de la police Phosphor dans `assets/fonts/`, à régénérer avec `scripts/subset-icons.sh` après en avoir ajouté une). |
 | `src/autostart.rs` | Lancement à l'ouverture de session (Windows) |
 | `src/worker.rs` | Fils de traitement : détection de la souris, scan, calibrage |
 | `src/cli.rs` | Sous-commandes `probe`, `record` et `stitch` |

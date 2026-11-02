@@ -37,6 +37,20 @@ impl Pose {
         let (s, c) = self.theta.sin_cos();
         Pose { x: self.x + c * du - s * dv, y: self.y + s * du + c * dv, theta: self.theta + dtheta }
     }
+
+    /// Rigid transform of canvas coordinates that maps pose `from` onto `to`
+    /// (`between(a, b).transform(a) == b`); used to move a whole mosaic.
+    pub fn between(from: Pose, to: Pose) -> Pose {
+        let theta = to.theta - from.theta;
+        let (s, c) = theta.sin_cos();
+        Pose { x: to.x - (c * from.x - s * from.y), y: to.y - (s * from.x + c * from.y), theta }
+    }
+
+    /// Applies `self`, seen as a rigid transform of canvas coordinates, to `pose`.
+    pub fn transform(&self, pose: Pose) -> Pose {
+        let (x, y) = self.apply(pose.x, pose.y);
+        Pose { x, y, theta: pose.theta + self.theta }
+    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -48,6 +62,7 @@ struct Px {
     w: f32,
 }
 
+#[derive(Clone)]
 struct Tile {
     px: Box<[Px]>,
 }
@@ -114,6 +129,19 @@ impl TileGrid {
         *self = Self { tx0: x0, ty0: y0, cols, rows, tiles };
     }
 
+    /// Replaces tile (`tx`, `ty`), e.g. to restore a saved state.
+    fn set(&mut self, tx: i32, ty: i32, tile: Option<Tile>) {
+        match tile {
+            Some(t) => *self.get_or_insert(tx, ty) = t,
+            None => {
+                let (cx, cy) = (tx - self.tx0, ty - self.ty0);
+                if cx >= 0 && cy >= 0 && cx < self.cols && cy < self.rows {
+                    self.tiles[(cy * self.cols + cx) as usize] = None;
+                }
+            }
+        }
+    }
+
     /// Existing tiles with their tile coordinates.
     fn iter(&self) -> impl Iterator<Item = ((i32, i32), &Tile)> {
         self.tiles.iter().enumerate().filter_map(|(i, t)| {
@@ -149,6 +177,8 @@ struct BlendJob<'a> {
     /// Canvas area covered by the frame.
     area: Bounds,
     max_weight: f32,
+    /// Only write pixels not covered yet.
+    fill_only: bool,
 }
 
 impl BlendJob<'_> {
@@ -173,7 +203,7 @@ impl BlendJob<'_> {
                 let (fu, fv) = (u, v);
                 u += c;
                 v -= s;
-                if fu < 0.0 || fv < 0.0 || fu > umax || fv > vmax {
+                if (px.w > 0.0 && self.fill_only) || fu < 0.0 || fv < 0.0 || fu > umax || fv > vmax {
                     continue;
                 }
                 // Through i32: float to unsigned conversions are slow on x86-64.
@@ -208,6 +238,12 @@ impl BlendJob<'_> {
     }
 }
 
+/// State of the canvas before a blend, to take it back (see [`Canvas::undo`]).
+pub struct Undo {
+    bounds: Option<Bounds>,
+    tiles: Vec<((i32, i32), Option<Tile>)>,
+}
+
 pub struct Canvas {
     tiles: TileGrid,
     bounds: Option<Bounds>,
@@ -224,11 +260,6 @@ impl Default for Canvas {
 impl Canvas {
     pub fn new() -> Self {
         Self { tiles: TileGrid::default(), bounds: None, max_weight: 4.0 }
-    }
-
-    pub fn clear(&mut self) {
-        self.tiles = TileGrid::default();
-        self.bounds = None;
     }
 
     pub fn is_empty(&self) -> bool {
@@ -248,7 +279,8 @@ impl Canvas {
         if p.w > 0.0 { Some(p) } else { None }
     }
 
-    /// Bilinear luminance lookup; `None` where less than half of the neighbourhood is covered.
+    /// Bilinear luminance lookup; `None` where less than half of the
+    /// neighbourhood is covered.
     #[inline]
     fn sample_luma(&self, x: f64, y: f64) -> Option<f32> {
         let (fx, fy) = (x.floor(), y.floor());
@@ -267,8 +299,59 @@ impl Canvas {
         if wsum > 0.5 { Some(acc / wsum) } else { None }
     }
 
-    /// Blends `img` at `pose`. `weights` holds one weight per frame pixel.
+    /// Writes `img` at `pose` only where the canvas is not covered yet (to
+    /// merge another mosaic without blurring what is already there).
+    pub fn fill(&mut self, img: &RgbImage, weights: &[f32], pose: Pose) {
+        self.blend_inner(img, weights, pose, false, true);
+        self.bounds = self.tight_bounds();
+    }
+
+    /// Bounds of the covered pixels.
+    fn tight_bounds(&self) -> Option<Bounds> {
+        let mut b: Option<Bounds> = None;
+        for ((tx, ty), tile) in self.tiles.iter() {
+            for (i, p) in tile.px.iter().enumerate() {
+                if p.w > 0.0 {
+                    let (x, y) = (tx * TILE + i as i32 % TILE, ty * TILE + i as i32 / TILE);
+                    b = Some(match b {
+                        None => Bounds { x0: x, y0: y, x1: x + 1, y1: y + 1 },
+                        Some(b) => {
+                            Bounds { x0: b.x0.min(x), y0: b.y0.min(y), x1: b.x1.max(x + 1), y1: b.y1.max(y + 1) }
+                        }
+                    });
+                }
+            }
+        }
+        b
+    }
+
+    /// Blends `img` at `pose` (`weights` holds one weight per frame pixel).
     pub fn blend(&mut self, img: &RgbImage, weights: &[f32], pose: Pose) {
+        self.blend_inner(img, weights, pose, false, false);
+    }
+
+    /// Like [`Canvas::blend`], and returns what is needed to undo it.
+    pub fn blend_undoable(&mut self, img: &RgbImage, weights: &[f32], pose: Pose) -> Undo {
+        self.blend_inner(img, weights, pose, true, false).expect("undo state requested")
+    }
+
+    /// Restores the canvas as it was before the blend that returned `undo`.
+    /// Blends made after it must have been undone first.
+    pub fn undo(&mut self, undo: Undo) {
+        for ((tx, ty), tile) in undo.tiles {
+            self.tiles.set(tx, ty, tile);
+        }
+        self.bounds = undo.bounds;
+    }
+
+    fn blend_inner(
+        &mut self,
+        img: &RgbImage,
+        weights: &[f32],
+        pose: Pose,
+        undoable: bool,
+        fill_only: bool,
+    ) -> Option<Undo> {
         let (w, h) = (img.width() as f64, img.height() as f64);
         let corners = [(-w, -h), (w, -h), (-w, h), (w, h)].map(|(u, v)| pose.apply(u / 2.0, v / 2.0));
         let x0 = corners.iter().map(|c| c.0).fold(f64::MAX, f64::min).floor() as i32;
@@ -278,13 +361,17 @@ impl Canvas {
         let area = Bounds { x0, y0, x1, y1 };
         let (tx0, tx1) = (x0.div_euclid(TILE), (x1 - 1).div_euclid(TILE));
         let (ty0, ty1) = (y0.div_euclid(TILE), (y1 - 1).div_euclid(TILE));
+        let mut undo = undoable.then(|| Undo { bounds: self.bounds, tiles: Vec::new() });
         for ty in ty0..=ty1 {
             for tx in tx0..=tx1 {
+                if let Some(u) = undo.as_mut() {
+                    u.tiles.push(((tx, ty), self.tiles.get(tx, ty).cloned()));
+                }
                 self.tiles.get_or_insert(tx, ty);
             }
         }
         // Tiles are independent: blend them in parallel.
-        let job = BlendJob { img, weights, pose, area, max_weight: self.max_weight };
+        let job = BlendJob { img, weights, pose, area, max_weight: self.max_weight, fill_only };
         let grid = &mut self.tiles;
         let (cols, gx0, gy0) = (grid.cols, grid.tx0, grid.ty0);
         let touched = grid
@@ -303,6 +390,7 @@ impl Canvas {
                 Some(b) => Bounds { x0: b.x0.min(x0), y0: b.y0.min(y0), x1: b.x1.max(x1), y1: b.y1.max(y1) },
             });
         }
+        undo
     }
 
     /// Renders the canvas luminance as seen by a frame at `pose`, downsampled by `step`.
@@ -390,6 +478,37 @@ impl Canvas {
             }
         }
         Some(out)
+    }
+
+    /// Full-resolution colours and accumulated weights (0 where never covered),
+    /// to blend this mosaic into another one.
+    pub fn render_weighted(&self) -> Option<(RgbImage, Vec<f32>, Bounds)> {
+        let b = self.bounds?;
+        let (w, h) = (b.width() as i32, b.height() as i32);
+        let mut img = RgbImage::new(w as u32, h as u32);
+        let mut weights = vec![0f32; (w * h) as usize];
+        for ((tx, ty), tile) in self.tiles.iter() {
+            for ly in 0..TILE {
+                let y = ty * TILE + ly - b.y0;
+                if y < 0 || y >= h {
+                    continue;
+                }
+                for lx in 0..TILE {
+                    let x = tx * TILE + lx - b.x0;
+                    let p = &tile.px[(ly * TILE + lx) as usize];
+                    if x >= 0 && x < w && p.w > 0.0 {
+                        img.put_pixel(x as u32, y as u32, Rgb(p.rgb));
+                        weights[(y * w + x) as usize] = p.w;
+                    }
+                }
+            }
+        }
+        Some((img, weights, b))
+    }
+
+    /// Number of covered pixels.
+    pub fn covered_area(&self) -> usize {
+        self.tiles.iter().map(|(_, t)| t.px.iter().filter(|p| p.w > 0.0).count()).sum()
     }
 
     /// Coverage mask (true where at least one frame contributed), full resolution.

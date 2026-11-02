@@ -6,6 +6,7 @@ use egui::Color32;
 use crate::config::{self};
 use crate::ocr::Tesseract;
 
+use super::icons as ic;
 use super::{App, Mode};
 
 impl App {
@@ -13,7 +14,7 @@ impl App {
         let mut open = self.show_settings;
         let mut changed = false;
         let mut calibrate = false;
-        egui::Window::new("Réglages").open(&mut open).resizable(false).show(ctx, |ui| {
+        egui::Window::new(ic::label(ic::SETTINGS, "Réglages")).open(&mut open).resizable(false).show(ctx, |ui| {
             ui.heading("Capture");
             let mut use_exp = self.cfg.imaging.exposure_ms.is_some();
             let mut exp = self.cfg.imaging.exposure_ms.unwrap_or(0.35);
@@ -65,10 +66,10 @@ impl App {
             ui.horizontal(|ui| {
                 let has = self.stitcher.lock().flat.is_some();
                 ui.label(if has { "Calibrage des couleurs : actif" } else { "Calibrage des couleurs : aucun" });
-                if ui.add_enabled(self.scanner.is_some() && self.mode != Mode::Scanning, egui::Button::new("Calibrer…")).clicked() {
+                if ui.add_enabled(self.scanner.is_some() && self.mode != Mode::Scanning, egui::Button::new(ic::label(ic::CALIBRATE, "Calibrer…"))).clicked() {
                     calibrate = true;
                 }
-                if ui.add_enabled(has, egui::Button::new("Supprimer")).clicked() {
+                if ui.add_enabled(has, egui::Button::new(ic::label(ic::TRASH, "Supprimer"))).clicked() {
                     let _ = config::delete_flat_field();
                     self.stitcher.lock().flat = None;
                 }
@@ -94,7 +95,7 @@ impl App {
                     ui.colored_label(Color32::from_rgb(220, 150, 50), "Introuvable");
                 }
             }
-            if ui.button("Choisir l'exécutable tesseract…").clicked()
+            if ui.button(ic::label(ic::FOLDER_OPEN, "Choisir l'exécutable tesseract…")).clicked()
                 && let Some(p) = rfd::FileDialog::new().pick_file() {
                     self.cfg.tesseract_path = Some(p);
                     self.tesseract = Tesseract::locate(self.cfg.tesseract_path.as_deref());
@@ -121,7 +122,7 @@ impl App {
     }
 
     pub(super) fn about_window(&mut self, ctx: &egui::Context) {
-        egui::Window::new("À propos").open(&mut self.show_about).resizable(false).show(ctx, |ui| {
+        egui::Window::new(ic::label(ic::INFO, "À propos")).open(&mut self.show_about).resizable(false).show(ctx, |ui| {
             ui.heading(format!("Mulot-scan {}", env!("CARGO_PKG_VERSION")));
             ui.label("Logiciel libre compatible avec la souris scanner IRIScan Mouse / Dacuda Scanner Mouse (USB 274f:c001).");
             ui.weak("Projet indépendant, sans lien avec I.R.I.S. ni Canon. IRIScan est une marque de ses propriétaires respectifs.");

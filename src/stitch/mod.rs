@@ -9,9 +9,11 @@
 
 mod canvas;
 mod flat;
+mod graph;
 mod laser;
 mod lift;
 mod linalg;
+mod locate;
 mod output;
 mod register;
 mod stitcher;
@@ -20,8 +22,8 @@ use serde::{Deserialize, Serialize};
 
 pub use canvas::Bounds;
 pub use flat::FlatField;
-pub use output::{orient_image, orient_point};
-pub use stitcher::{STITCH_FRAME, StepInfo, Stitcher};
+pub use output::{Levels, apply_levels, levels, orient_image, orient_point};
+pub use stitcher::{STITCH_FRAME, StepInfo, Stitcher, mean_brightness};
 
 /// Tunable parameters of the stitcher.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]

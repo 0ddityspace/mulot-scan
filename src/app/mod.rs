@@ -12,7 +12,7 @@ use parking_lot::Mutex;
 
 use crate::config::{self, Config};
 use crate::device::{MouseData, ReplaySource, ScanSession, Scanner};
-use crate::edit::Adjustments;
+use crate::edit::{Adjustments, CropRect};
 use crate::export::{self, ExportJob, Format};
 use crate::ocr::Tesseract;
 use crate::stitch::{StepInfo, Stitcher};
@@ -20,6 +20,7 @@ use crate::worker::{self, DeviceManager, DeviceMsg, Preview, UiMsg};
 
 mod autotest;
 mod editor;
+mod icons;
 mod panels;
 mod tray;
 mod views;
@@ -78,6 +79,8 @@ pub struct App {
     preview: Option<Box<Preview>>,
     preview_tex: Option<TextureHandle>,
     camera_tex: Option<TextureHandle>,
+    /// Last stitched frame, drawn over the preview at its pose.
+    live_tex: Option<TextureHandle>,
     last_step: StepInfo,
     fps: f32,
     frames: u64,
@@ -90,6 +93,9 @@ pub struct App {
     editor: Editor,
     edited_tex: Option<TextureHandle>,
     edited_dirty: bool,
+    /// Part of the scan without its irregular unscanned border (in the image
+    /// as stitched), for the automatic crop.
+    scanned_area: Option<CropRect>,
 
     // OCR
     tesseract: Option<Tesseract>,
@@ -117,9 +123,10 @@ pub struct App {
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, opts: GuiOptions) -> Self {
+        icons::install(&cc.egui_ctx);
         let cfg = Config::load();
         let mut stitcher = Stitcher::new(cfg.stitch);
-        match config::load_flat_field() {
+        match config::load_flat_field(cfg.imaging.effective_white_balance()) {
             Ok(f) => stitcher.flat = f,
             Err(e) => log::warn!("{e:#}"),
         }
@@ -157,6 +164,7 @@ impl App {
             preview: None,
             preview_tex: None,
             camera_tex: None,
+            live_tex: None,
             last_step: StepInfo::default(),
             fps: 0.0,
             frames: 0,
@@ -167,6 +175,7 @@ impl App {
             editor: Editor::default(),
             edited_tex: None,
             edited_dirty: false,
+            scanned_area: None,
             tesseract,
             languages,
             ocr_text: String::new(),
@@ -287,6 +296,7 @@ impl App {
             self.ui_tx.clone(),
             ctx.clone(),
             PREVIEW_MAX,
+            self.cfg.auto_levels,
         );
         self.session = Some(session);
         self.preview = None;
@@ -312,10 +322,11 @@ impl App {
         {
             self.error = Some(e);
         }
-        let img = self.stitcher.lock().finish(self.cfg.auto_levels);
+        let img = self.stitcher.lock().finish_with_area(self.cfg.auto_levels);
         match img {
-            Some(img) => {
+            Some((img, area)) => {
                 self.set_result(img);
+                self.scanned_area = area.map(|[x0, y0, x1, y1]| CropRect { x0, y0, x1, y1 });
                 self.status = "Scan terminé.".into();
             }
             None => {
@@ -344,6 +355,7 @@ impl App {
         self.edited_dirty = true;
         self.ocr_text.clear();
         self.mode = Mode::Review;
+        self.scanned_area = None;
     }
 
     fn start_calibration(&mut self, ctx: &egui::Context) {
@@ -415,15 +427,15 @@ impl App {
                     self.frames = frames;
                     self.mouse = mouse;
                 }
+                UiMsg::Live(img) => {
+                    let ci = ColorImage::from_rgb([img.width() as usize, img.height() as usize], img.as_raw());
+                    match &mut self.live_tex {
+                        Some(t) => t.set(ci, TextureOptions::LINEAR),
+                        None => self.live_tex = Some(ctx.load_texture("live", ci, TextureOptions::LINEAR)),
+                    }
+                }
                 UiMsg::Camera(img) => {
-                    let rgba = RgbaImage::from_fn(img.width(), img.height(), |x, y| {
-                        let p = img.get_pixel(x, y).0;
-                        image::Rgba([p[0], p[1], p[2], 255])
-                    });
-                    let ci = ColorImage::from_rgba_unmultiplied(
-                        [rgba.width() as usize, rgba.height() as usize],
-                        rgba.as_raw(),
-                    );
+                    let ci = ColorImage::from_rgb([img.width() as usize, img.height() as usize], img.as_raw());
                     match &mut self.camera_tex {
                         Some(t) => t.set(ci, TextureOptions::LINEAR),
                         None => self.camera_tex = Some(ctx.load_texture("camera", ci, TextureOptions::LINEAR)),
@@ -446,7 +458,7 @@ impl App {
                     self.mode = if self.result.is_some() { Mode::Review } else { Mode::Idle };
                     match res {
                         Ok(f) => {
-                            if let Err(e) = config::save_flat_field(&f) {
+                            if let Err(e) = config::save_flat_field(&f, self.cfg.imaging.effective_white_balance()) {
                                 self.error = Some(format!("{e:#}"));
                             }
                             self.stitcher.lock().flat = Some(f);
@@ -618,7 +630,7 @@ impl eframe::App for App {
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
                 .show(&ctx, |ui| {
-                    ui.label(e);
+                    ui.label(icons::label(icons::WARNING, &e));
                     if ui.button("OK").clicked() {
                         close = true;
                     }

@@ -77,6 +77,35 @@ impl App {
             let (x, y) = pose.apply(u, v);
             to_screen(x, y)
         });
+        // The current frame, drawn where it goes: the view follows the mouse at
+        // the camera's frame rate while the mosaic preview is refreshed less often.
+        let step = &self.last_step;
+        if let Some(live) = &self.live_tex
+            && !step.lifted
+            && !step.searching
+            && !step.lost
+        {
+            // Without the dark, rounded border of the camera window.
+            const INSET: f64 = 14.0;
+            let (iu, iv) = ((INSET / (2.0 * fw)) as f32, (INSET / (2.0 * fh)) as f32);
+            let mut mesh = egui::Mesh::with_texture(live.id());
+            for ((u, v), uv) in [(-fw, -fh), (fw, -fh), (fw, fh), (-fw, fh)].into_iter().zip([
+                (iu, iv),
+                (1.0 - iu, iv),
+                (1.0 - iu, 1.0 - iv),
+                (iu, 1.0 - iv),
+            ]) {
+                let (x, y) = pose.apply(u - u.signum() * INSET, v - v.signum() * INSET);
+                mesh.vertices.push(egui::epaint::Vertex {
+                    pos: to_screen(x, y),
+                    uv: Pos2::new(uv.0, uv.1),
+                    color: Color32::WHITE,
+                });
+            }
+            mesh.add_triangle(0, 1, 2);
+            mesh.add_triangle(0, 2, 3);
+            painter.add(egui::Shape::mesh(mesh));
+        }
         let color = if self.last_step.lifted || self.last_step.searching {
             Color32::from_rgb(120, 160, 255)
         } else if self.last_step.too_fast {
